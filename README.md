@@ -41,16 +41,20 @@ A tiny, fast terminal text editor written in Rust. It focuses on instant startup
 ## Keys
 Default bindings use Vim conventions. The editor is modeless to launch, but starts in Normal mode.
 
-- Insert mode: `i` to enter (also `a`/`o`/`O`), `Esc` to leave.
+- Insert mode: `i` to enter (also `a`/`o`/`O`), `Esc` to leave. In Insert, `Ctrl-g` then `u` starts a new undo step (like Vim’s Ctrl-g u).
 - Movement: `h` `j` `k` `l`, `0` (line start), `$` (line end), `gg` (top), `G` (bottom). Arrows/Home/End/Page keys also work.
-- Edit: `x` (delete char under cursor), `dd` (delete line), `o` (open below), `O` (open above).
+- Edit: `x` (delete char under cursor), `dd` (delete line), `o` (open below), `O` (open above), operators with motions: `d{motion}`, `c{motion}`, `y{motion}` (e.g., `dw`, `cw`, `y$`). Counts apply: `3dd`, `2dw`, etc.
 - Commands: `:` opens a prompt; supported: `w`, `q`, `wq`/`x`.
+- Undo/Redo: Normal `u` undo, `Ctrl-R` redo. In Insert, `Ctrl-Z` also triggers undo for convenience.
 - System: `Ctrl-S` save (prompts for filename if unset), `Ctrl-Q` quit (with modification guard).
 
 ## Notes
 - File format: UTF-8 text with `\n` newlines. `\r` are stripped on open.
 - Status bar: shows file name, modified flag, line count, mode, and current line.
 - Without a filename, pressing Ctrl-S opens a Save As prompt on the status line. Press Esc to cancel.
+ - Undo semantics mirror Vim:
+   - One Normal-mode command (even with a count) is a single undo step (e.g., `3dd` undoes all 3 lines at once).
+   - One Insert session is a single undo step; use `Ctrl-g u` to break the undo group while staying in Insert.
 
 ## Configurable Key Bindings
 You can override Normal-mode bindings and general options with a simple config file. Search order:
