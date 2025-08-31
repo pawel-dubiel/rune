@@ -1,5 +1,10 @@
 # Rune
 
+[![CI](https://github.com/rune/rune/actions/workflows/ci.yml/badge.svg)](https://github.com/rune/rune/actions/workflows/ci.yml)
+![Style: rustfmt](https://img.shields.io/badge/style-rustfmt-blue.svg)
+![Lint: clippy -D warnings](https://img.shields.io/badge/lint-clippy%20(-D%20warnings)-blue?logo=rust)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20|%20Linux%20|%20Windows-4c1)
+
 A tiny, fast terminal text editor written in Rust. It focuses on instant startup, responsive navigation, and a minimal feature set. Now with Vim-like modal editing and configurable key bindings.
 
 ## Features
