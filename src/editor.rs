@@ -823,6 +823,11 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
+    fn undo_stack_len(&self) -> usize {
+        self.undo_stack.len()
+    }
+
     fn find_next_word_start_from(&self, mut y: usize) -> Option<(usize, usize)> {
         use unicode_segmentation::UnicodeSegmentation;
         while y < self.buf.rows.len() {
@@ -1145,6 +1150,158 @@ mod tests {
     }
 
     #[test]
+    fn undo_redo_insert_and_delete() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Insert;
+        ed.buf.rows = vec![String::new()];
+        ed.insert_char('a');
+        ed.insert_char('b');
+        ed.insert_char('c');
+        assert_eq!(ed.buf.rows[0], "abc");
+        // Undo should revert the entire insert group while in insert mode
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "abc");
+
+        ed.mode = Mode::Normal;
+        // dd with undo/redo
+        for ch in "dd".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.rows[0], "");
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows.len(), 1);
+        // buffer restored before dd
+        assert_eq!(ed.buf.rows[0], "abc");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "");
+    }
+
+    #[test]
+    fn undo_redo_for_3dd() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec![
+            "l1".into(),
+            "l2".into(),
+            "l3".into(),
+            "l4".into(),
+            "l5".into(),
+        ];
+        ed.cy = 1;
+        for ch in "3dd".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.rows, vec![String::from("l1"), String::from("l5")]);
+        // Single undo restores all 3 lines; redo removes them again
+        assert!(ed.undo());
+        assert_eq!(
+            ed.buf.rows,
+            vec![
+                String::from("l1"),
+                String::from("l2"),
+                String::from("l3"),
+                String::from("l4"),
+                String::from("l5"),
+            ]
+        );
+        // Redo should reapply the 3dd change
+        // Redo should reapply the 3dd change
+        // Note: redo behavior is covered in other tests
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows, vec![String::from("l1"), String::from("l5")]);
+    }
+
+    #[test]
+    fn undo_redo_dw_and_dollar() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["hello world".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "dw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.rows[0], "world");
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "hello world");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "world");
+
+        ed.buf.rows = vec!["hello world".into()];
+        ed.cx = 6;
+        for ch in "d$".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.rows[0], "hello ");
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "hello world");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "hello ");
+    }
+
+    #[test]
+    fn counted_motion_does_not_create_undo_step() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = (0..30).map(|i| format!("line{}", i)).collect();
+        let before = ed.undo_stack_len();
+        for ch in "10j".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        // Pure motion should not add to undo stack
+        assert_eq!(ed.undo_stack_len(), before);
+        // Undo should be a no-op
+        assert!(!ed.undo());
+    }
+
+    #[test]
+    fn undo_redo_cw() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["hello world".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "cw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.rows[0], "world");
+        // Insert-mode undo grouping: leaving insert not required here; cw is one change
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "hello world");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "world");
+    }
+
+    #[test]
+    fn insert_undo_break_ctrl_g_u_behaviour() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Insert;
+        ed.buf.rows = vec![String::new()];
+        ed.insert_char('a');
+        ed.insert_char('b');
+        ed.insert_char('c');
+        // simulate Ctrl-g u: end current undo group but stay in insert mode
+        ed.end_undo_group();
+        ed.insert_char('d');
+        ed.insert_char('e');
+        ed.insert_char('f');
+        assert_eq!(ed.buf.rows[0], "abcdef");
+        // Undo only removes 'def'
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "abc");
+        // Undo again removes 'abc'
+        assert!(ed.undo());
+        assert_eq!(ed.buf.rows[0], "");
+        // Redo restores 'abc', then 'def'
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "abc");
+        assert!(ed.redo());
+        assert_eq!(ed.buf.rows[0], "abcdef");
+    }
+
+    #[test]
     fn dw_at_eol_joins_next_line() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
@@ -1185,6 +1342,58 @@ mod tests {
         assert_eq!(ed.clipboard, "world");
         // content remains unchanged
         assert_eq!(ed.buf.rows[0], "hello world");
+    }
+
+    #[test]
+    fn operator_3dw_across_lines() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["one two".into(), "three four".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "3dw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        // Current semantics: deletes first two words across EOL, leaving the next line intact
+        assert_eq!(ed.buf.rows, vec![String::from("three four")]);
+        // Single undo should restore original
+        assert!(ed.undo());
+        assert_eq!(
+            ed.buf.rows,
+            vec![String::from("one two"), String::from("three four")]
+        );
+    }
+
+    #[test]
+    fn operator_2cw_across_lines_enters_insert() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["one two".into(), "three four".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "2cw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        // After changing two words across lines, leaves "three four" and enters Insert
+        // Current semantics: changes up to start of next line; leaves an empty first line
+        assert_eq!(
+            ed.buf.rows,
+            vec![String::from(""), String::from("three four")]
+        );
+        assert!(matches!(ed.mode, super::Mode::Insert));
+        // Undo restores original in single step
+        assert!(ed.undo());
+        assert_eq!(
+            ed.buf.rows,
+            vec![String::from("one two"), String::from("three four")]
+        );
+        // Redo re-applies change and returns to Insert
+        assert!(ed.redo());
+        assert_eq!(
+            ed.buf.rows,
+            vec![String::from(""), String::from("three four")]
+        );
+        assert!(matches!(ed.mode, super::Mode::Insert));
     }
 
     #[test]
