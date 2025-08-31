@@ -1,0 +1,9 @@
+[build]
+target-dir = "target"
+
+[term]
+color = "auto"
+
+[profile.dev]
+incremental = true
+

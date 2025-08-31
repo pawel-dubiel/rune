@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN="$APP_DIR/rune"
+
+/usr/bin/osascript <<OSA
+tell application "Terminal"
+    activate
+    do script quoted form of "$BIN"
+end tell
+OSA
+

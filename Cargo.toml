@@ -1,0 +1,15 @@
+[package]
+name = "rune"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+panic = "abort"
+
+[dependencies]
+crossterm = "0.27"
+unicode-segmentation = "1.10"
+unicode-width = "0.1"

@@ -1,0 +1,43 @@
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# Build artifacts
+dist/
+
+# macOS / OS cruft
+.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Editor/IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Swap/backup files
+*~
+*.swp
+*.swo
+*.tmp
+
+# Env / local config
+.env
+.env.*
+.envrc
+
+# Coverage / profiling
+coverage/
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+
+# Logs
+*.log
+
+# Note: For application crates, keep Cargo.lock committed.
+# If this becomes a library crate, you may ignore it:
+# Cargo.lock
