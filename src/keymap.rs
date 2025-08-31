@@ -30,6 +30,8 @@ pub enum Action {
     MoveWordForward,
     MoveWordBackward,
     MoveEndWord,
+    Undo,
+    Redo,
     CommandPrompt,
 }
 
@@ -53,6 +55,7 @@ pub fn default_keymap() -> HashMap<String, Action> {
     m.insert("d".into(), OperatorDelete);
     m.insert("c".into(), OperatorChange);
     m.insert("y".into(), OperatorYank);
+    m.insert("u".into(), Undo);
     m.insert("w".into(), MoveWordForward);
     m.insert("b".into(), MoveWordBackward);
     m.insert("e".into(), MoveEndWord);
@@ -80,6 +83,8 @@ fn parse_action(name: &str) -> Option<Action> {
         "delete" | "d" => Some(OperatorDelete),
         "change" | "c" => Some(OperatorChange),
         "yank" | "y" => Some(OperatorYank),
+        "undo" | "u" => Some(Undo),
+        "redo" => Some(Redo),
         "move_word_forward" | "w" => Some(MoveWordForward),
         "move_word_backward" | "b" => Some(MoveWordBackward),
         "move_end_word" | "e" => Some(MoveEndWord),

@@ -307,6 +307,12 @@ impl Editor {
             OperatorYank => {
                 self.op_pending = Some((Action::OperatorYank, 1));
             }
+            Undo => {
+                let _ = self.undo();
+            }
+            Redo => {
+                let _ = self.redo();
+            }
             MoveWordForward | MoveWordBackward | MoveEndWord => {
                 self.apply_motion(act, 1, None);
             }
