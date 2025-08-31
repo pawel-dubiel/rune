@@ -16,6 +16,7 @@
 - Tests: `cargo test`
 - Lint (deny warnings): `cargo clippy --workspace --all-targets -- -D warnings`
 - Format: `cargo fmt --all`
+- Format (check mode): `cargo fmt --all -- --check` (CI uses this)
 - Install CLI: `make install` (installs `rune` to `/usr/local/bin`)
 - macOS app bundle: `make app-macos` → `dist/rune.app`
 - Enable hooks: `make hooks-install`
@@ -36,6 +37,7 @@
 - Commits: concise imperative subject (e.g., "Add diff-based rendering"), scope small and focused.
 - PRs: include a summary, rationale, and testing notes. Link issues when relevant.
 - Ensure `cargo fmt`, `clippy -D warnings`, and `cargo test` pass locally (pre-commit hook runs these).
+  - Formatting is mandatory; run `cargo fmt --all` after changes to avoid CI failures.
 
 ## Configuration & Security Notes
 - User config: `rune.conf` (also supports legacy `vedit.conf`); search paths include `./`, `$XDG_CONFIG_HOME/rune/`, and `~/.config/rune/`.

@@ -186,7 +186,9 @@ impl Buffer {
     }
 
     pub fn next_word_start(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else { return col; };
+        let Some(row) = self.rows.get(y) else {
+            return col;
+        };
         let bi = self.col_to_byte(y, col);
         let mut found = None::<usize>;
         let mut cur_end: Option<usize> = None;
@@ -215,7 +217,9 @@ impl Buffer {
         let mut acc2 = 0usize;
         let mut bpos = 0usize;
         for g in row.graphemes(true) {
-            if bpos >= target_b { break; }
+            if bpos >= target_b {
+                break;
+            }
             acc2 += UnicodeWidthStr::width(g).max(1);
             bpos += g.len();
         }
@@ -223,11 +227,15 @@ impl Buffer {
     }
 
     pub fn prev_word_start(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else { return col; };
+        let Some(row) = self.rows.get(y) else {
+            return col;
+        };
         let bi = self.col_to_byte(y, col);
         let mut prev = None::<usize>;
         for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
-            if i >= bi { break; }
+            if i >= bi {
+                break;
+            }
             if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
                 prev = Some(i);
             }
@@ -236,7 +244,9 @@ impl Buffer {
         let mut acc2 = 0usize;
         let mut bpos = 0usize;
         for g in row.graphemes(true) {
-            if bpos >= target_b { break; }
+            if bpos >= target_b {
+                break;
+            }
             acc2 += UnicodeWidthStr::width(g).max(1);
             bpos += g.len();
         }
@@ -244,7 +254,9 @@ impl Buffer {
     }
 
     pub fn end_of_word(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else { return col; };
+        let Some(row) = self.rows.get(y) else {
+            return col;
+        };
         let bi = self.col_to_byte(y, col);
         let mut _cur_word_start = None::<usize>;
         let mut cur_word_end = None::<usize>;
@@ -269,7 +281,9 @@ impl Buffer {
         for g in row.graphemes(true) {
             let next_b = bpos + g.len();
             let w = UnicodeWidthStr::width(g).max(1);
-            if next_b > target_b { break; }
+            if next_b > target_b {
+                break;
+            }
             acc2 += w;
             bpos = next_b;
         }
@@ -298,7 +312,9 @@ mod tests {
 
     #[test]
     fn insert_char_and_navigation_grapheme() {
-        let mut b = Buffer { rows: vec!["a".to_string()] };
+        let mut b = Buffer {
+            rows: vec!["a".to_string()],
+        };
         b.insert_char(1, 0, '😄');
         assert_eq!(b.rows[0], "a😄");
         assert_eq!(b.next_col(0, 0), 1);

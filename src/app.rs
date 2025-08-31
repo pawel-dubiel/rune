@@ -176,7 +176,9 @@ pub fn run() -> io::Result<()> {
                                 KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
                                     match ed.process_normal_char(c) {
                                         crate::editor::NormalInputResult::CommandPrompt => {
-                                            if let Ok(Some(cmd)) = ui.prompt_command(&mut ed, &mut stdout) {
+                                            if let Ok(Some(cmd)) =
+                                                ui.prompt_command(&mut ed, &mut stdout)
+                                            {
                                                 if !ed.execute_ex_command(&cmd) {
                                                     match cmd.as_str() {
                                                         "w" => {

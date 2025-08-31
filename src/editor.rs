@@ -304,16 +304,21 @@ impl Editor {
                         if let Some((op_kind, n0)) = self.op_pending.take() {
                             let effective = count.unwrap_or(n0);
                             match (op_kind, act) {
-                                (Action::OperatorDelete, Action::OperatorDelete) | (Action::OperatorDelete, Action::DeleteLine) => {
+                                (Action::OperatorDelete, Action::OperatorDelete)
+                                | (Action::OperatorDelete, Action::DeleteLine) => {
                                     self.apply_action_count(Action::DeleteLine, effective);
                                 }
                                 (Action::OperatorChange, Action::OperatorChange) => {
                                     // Change whole line(s)
                                     for _ in 0..effective.max(1) {
-                                        if let Some(row) = self.buf.rows.get_mut(self.cy) { row.clear(); }
+                                        if let Some(row) = self.buf.rows.get_mut(self.cy) {
+                                            row.clear();
+                                        }
                                         self.cx = 0;
                                         self.dirty = true;
-                                        if self.cy + 1 < self.buf.rows.len() { self.cy += 1; }
+                                        if self.cy + 1 < self.buf.rows.len() {
+                                            self.cy += 1;
+                                        }
                                     }
                                     self.mode = Mode::Insert;
                                     self.cy = self.cy.saturating_sub(effective.saturating_sub(1));
@@ -335,7 +340,10 @@ impl Editor {
                                     self.apply_action_count(other, effective);
                                 }
                             }
-                        } else if matches!(act, Action::OperatorDelete | Action::OperatorChange | Action::OperatorYank) {
+                        } else if matches!(
+                            act,
+                            Action::OperatorDelete | Action::OperatorChange | Action::OperatorYank
+                        ) {
                             // operator becomes pending
                             let opk = act;
                             self.op_pending = Some((opk, count.unwrap_or(1)));
@@ -403,7 +411,11 @@ impl Editor {
                                 | Action::MoveEndWord
                                 | Action::LineStart
                                 | Action::LineEnd => {
-                                    self.apply_motion(act, effective, Some((Action::OperatorDelete, effective)));
+                                    self.apply_motion(
+                                        act,
+                                        effective,
+                                        Some((Action::OperatorDelete, effective)),
+                                    );
                                 }
                                 _ => {
                                     self.apply_action_count(act, effective);
@@ -415,23 +427,23 @@ impl Editor {
                             self.op_pending = None;
                             self.apply_action_count(act, n);
                         }
-                        } else if let Some((op_kind, n0)) = self.op_pending.take() {
-                            let effective = n.max(n0);
-                            match act {
-                                Action::OperatorDelete | Action::DeleteLine => {
-                                    self.apply_action_count(Action::DeleteLine, effective);
-                                }
-                                Action::MoveWordForward
-                                | Action::MoveWordBackward
-                                | Action::MoveEndWord
-                                | Action::LineStart
-                                | Action::LineEnd => {
-                                    self.apply_motion(act, effective, Some((op_kind, effective)));
-                                }
-                                _ => {
-                                    self.apply_action_count(act, effective);
-                                }
+                    } else if let Some((op_kind, n0)) = self.op_pending.take() {
+                        let effective = n.max(n0);
+                        match act {
+                            Action::OperatorDelete | Action::DeleteLine => {
+                                self.apply_action_count(Action::DeleteLine, effective);
                             }
+                            Action::MoveWordForward
+                            | Action::MoveWordBackward
+                            | Action::MoveEndWord
+                            | Action::LineStart
+                            | Action::LineEnd => {
+                                self.apply_motion(act, effective, Some((op_kind, effective)));
+                            }
+                            _ => {
+                                self.apply_action_count(act, effective);
+                            }
+                        }
                     } else {
                         self.op_pending = None;
                         self.apply_action_count(act, n);
@@ -479,7 +491,11 @@ impl Editor {
                     let cur_next = self.buf.next_word_start(target_c, y);
                     let next_line_word = if cur_next == target_c {
                         if let Some((Action::OperatorDelete, _)) = op {
-                            if y + 1 < self.buf.rows.len() { Some((y + 1, 0)) } else { None }
+                            if y + 1 < self.buf.rows.len() {
+                                Some((y + 1, 0))
+                            } else {
+                                None
+                            }
                         } else {
                             self.find_next_word_start_from(y + 1)
                         }
@@ -508,7 +524,9 @@ impl Editor {
                     if let Some((ny, nx)) = prev_line_word {
                         y = ny;
                         target_c = nx;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 self.apply_range_or_move((y, target_c), false, op);
             }
@@ -526,7 +544,9 @@ impl Editor {
                     if let Some((ny, nx)) = next_line_end {
                         y = ny;
                         target_c = nx;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 self.apply_range_or_move((y, target_c), true, op);
             }
@@ -546,7 +566,12 @@ impl Editor {
         }
     }
 
-    fn apply_range_or_move(&mut self, target: (usize, usize), inclusive: bool, op: Option<(Action, usize)>) {
+    fn apply_range_or_move(
+        &mut self,
+        target: (usize, usize),
+        inclusive: bool,
+        op: Option<(Action, usize)>,
+    ) {
         if let Some((op_kind, op_count)) = op.or_else(|| self.op_pending.take()) {
             // When operator pending, the motion count applies to the motion if present.
             let mut target_col = target.1;
@@ -555,7 +580,9 @@ impl Editor {
             let mut last_line = self.cy;
             // Apply operator count by repeating deletion over repeated motions
             for _ in 0..op_count {
-                let (sy, sx, ey, ex) = if (target_line > last_line) || (target_line == last_line && target_col >= last_col) {
+                let (sy, sx, ey, ex) = if (target_line > last_line)
+                    || (target_line == last_line && target_col >= last_col)
+                {
                     (last_line, last_col, target_line, target_col)
                 } else {
                     (target_line, target_col, last_line, last_col)
@@ -676,7 +703,9 @@ impl Editor {
                     let mut acc = 0usize;
                     let mut bpos = 0usize;
                     for g in row.graphemes(true) {
-                        if bpos >= i { break; }
+                        if bpos >= i {
+                            break;
+                        }
                         acc += unicode_width::UnicodeWidthStr::width(g).max(1);
                         bpos += g.len();
                     }
@@ -704,14 +733,18 @@ impl Editor {
                     let mut acc = 0usize;
                     let mut bpos = 0usize;
                     for g in row.graphemes(true) {
-                        if bpos >= i { break; }
+                        if bpos >= i {
+                            break;
+                        }
                         acc += unicode_width::UnicodeWidthStr::width(g).max(1);
                         bpos += g.len();
                     }
                     return Some((yy, acc));
                 }
             }
-            if yy == 0 { break; }
+            if yy == 0 {
+                break;
+            }
             yy -= 1;
         }
         None
@@ -730,7 +763,9 @@ impl Editor {
                     for g in row.graphemes(true) {
                         let next_b = bpos + g.len();
                         let w = unicode_width::UnicodeWidthStr::width(g).max(1);
-                        if next_b > end_b { break; }
+                        if next_b > end_b {
+                            break;
+                        }
                         acc += w;
                         bpos = next_b;
                     }
@@ -821,7 +856,9 @@ impl Editor {
             let sign = if s.starts_with('+') { 1isize } else { -1isize };
             if let Ok(n) = s[1..].parse::<isize>() {
                 let base = self.cy as isize;
-                let target = (base + sign * n).clamp(0, (self.buf.rows.len().saturating_sub(1)) as isize) as usize;
+                let target = (base + sign * n)
+                    .clamp(0, (self.buf.rows.len().saturating_sub(1)) as isize)
+                    as usize;
                 self.cy = target;
                 self.cx = 0;
                 self.clamp_cursor();
@@ -933,7 +970,7 @@ mod tests {
         ed.mode = Mode::Normal;
         ed.buf.rows = (0..=5).map(|i| format!("{}", i)).collect();
         let _ = ed.process_normal_char('g'); // start a prefix
-        // Simulate timeout without sleeping
+                                             // Simulate timeout without sleeping
         let _ = ed.process_pending_timeout();
         assert_eq!(ed.pending, "");
         // Count-only pending also clears on timeout
@@ -950,19 +987,30 @@ mod tests {
         ed.cy = 0;
         ed.cx = 0;
         // dw from start should remove "hello "
-        for ch in "dw".chars() { let _ = ed.process_normal_char(ch); }
+        for ch in "dw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert_eq!(ed.buf.rows[0], "world");
         // reset
-        ed.buf.rows[0] = "hello world".into(); ed.cx = 6; // before 'w'
-        for ch in "d$".chars() { let _ = ed.process_normal_char(ch); }
+        ed.buf.rows[0] = "hello world".into();
+        ed.cx = 6; // before 'w'
+        for ch in "d$".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert_eq!(ed.buf.rows[0], "hello ");
         // counts: 3w moves three words (here only two words so clamp)
-        ed.buf.rows = vec!["one two three four".into()]; ed.cy = 0; ed.cx = 0;
-        for ch in "3w".chars() { let _ = ed.process_normal_char(ch); }
+        ed.buf.rows = vec!["one two three four".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "3w".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert!(ed.cx > 0);
         // 2dw deletes two words from current position
         let start_text = ed.buf.rows[0].clone();
-        for ch in "2dw".chars() { let _ = ed.process_normal_char(ch); }
+        for ch in "2dw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert!(ed.buf.rows[0].len() < start_text.len());
     }
 
@@ -973,7 +1021,9 @@ mod tests {
         ed.buf.rows = vec!["foo".into(), "  bar baz".into()];
         ed.cy = 0;
         ed.cx = ed.buf.line_width(0); // end of first line
-        for ch in "dw".chars() { let _ = ed.process_normal_char(ch); }
+        for ch in "dw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert_eq!(ed.buf.rows, vec![String::from("foo  bar baz")]);
         assert_eq!(ed.cy, 0);
     }
@@ -985,7 +1035,9 @@ mod tests {
         ed.buf.rows = vec!["hello world".into()];
         ed.cy = 0;
         ed.cx = 0;
-        for ch in "cw".chars() { let _ = ed.process_normal_char(ch); }
+        for ch in "cw".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert_eq!(ed.buf.rows[0], "world");
         assert!(matches!(ed.mode, Mode::Insert));
     }
@@ -997,7 +1049,9 @@ mod tests {
         ed.buf.rows = vec!["hello world".into()];
         ed.cy = 0;
         ed.cx = 6; // before 'w'
-        for ch in "y$".chars() { let _ = ed.process_normal_char(ch); }
+        for ch in "y$".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
         assert_eq!(ed.clipboard, "world");
         // content remains unchanged
         assert_eq!(ed.buf.rows[0], "hello world");
