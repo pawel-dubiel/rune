@@ -6,6 +6,25 @@ use std::time::Instant;
 use crate::buffer::Buffer;
 use crate::keymap::{default_keymap, load_config, Action, Mode};
 
+#[derive(Clone)]
+struct EditorSnapshot {
+    rows: Vec<String>,
+    cx: usize,
+    cy: usize,
+    mode: Mode,
+}
+
+impl EditorSnapshot {
+    fn from_editor(ed: &Editor) -> Self {
+        Self {
+            rows: ed.buf.rows.clone(),
+            cx: ed.cx,
+            cy: ed.cy,
+            mode: ed.mode,
+        }
+    }
+}
+
 pub struct Editor {
     pub buf: Buffer,
     pub filename: Option<PathBuf>,
@@ -21,6 +40,10 @@ pub struct Editor {
     pub pending_started: Option<Instant>,
     pub op_pending: Option<(Action, usize)>,
     pub clipboard: String,
+    undo_stack: Vec<EditorSnapshot>,
+    redo_stack: Vec<EditorSnapshot>,
+    undo_group_active: bool,
+    count_group_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +69,10 @@ impl Editor {
             pending_started: None,
             op_pending: None,
             clipboard: String::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            undo_group_active: false,
+            count_group_active: false,
         };
         let cfg = load_config(ed.keymap.clone());
         ed.keymap = cfg.keymap;
