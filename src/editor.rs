@@ -53,6 +53,57 @@ pub enum NormalInputResult {
 }
 
 impl Editor {
+    fn on_edit_start(&mut self) {
+        // Group insert-mode edits into a single undo step until leaving Insert
+        if self.count_group_active {
+        } else if matches!(self.mode, Mode::Insert) {
+            if !self.undo_group_active {
+                let snap = EditorSnapshot::from_editor(self);
+                self.undo_stack.push(snap);
+                self.redo_stack.clear();
+                self.undo_group_active = true;
+            }
+        } else {
+            let snap = EditorSnapshot::from_editor(self);
+            self.undo_stack.push(snap);
+            self.redo_stack.clear();
+            self.undo_group_active = false;
+        }
+    }
+
+    pub fn end_undo_group(&mut self) {
+        self.undo_group_active = false;
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if let Some(prev) = self.undo_stack.pop() {
+            let cur = EditorSnapshot::from_editor(self);
+            self.redo_stack.push(cur);
+            self.buf.rows = prev.rows;
+            self.cx = prev.cx;
+            self.cy = prev.cy;
+            self.mode = prev.mode;
+            self.clamp_cursor();
+            self.undo_group_active = false;
+            return true;
+        }
+        false
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if let Some(next) = self.redo_stack.pop() {
+            let cur = EditorSnapshot::from_editor(self);
+            self.undo_stack.push(cur);
+            self.buf.rows = next.rows;
+            self.cx = next.cx;
+            self.cy = next.cy;
+            self.mode = next.mode;
+            self.clamp_cursor();
+            self.undo_group_active = false;
+            return true;
+        }
+        false
+    }
     pub fn new() -> io::Result<Self> {
         let mut ed = Self {
             buf: Buffer::default(),
