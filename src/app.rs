@@ -34,6 +34,7 @@ pub fn run() -> io::Result<()> {
         crossterm::terminal::Clear(ClearType::All)
     )?;
     let res = (|| -> io::Result<()> {
+        let mut insert_undo_break_pending = false;
         let mut needs_redraw = true;
         loop {
             if needs_redraw {
@@ -86,7 +87,24 @@ pub fn run() -> io::Result<()> {
                         _ => match ed.mode {
                             Mode::Insert => match code {
                                 KeyCode::Esc => {
+                                    ed.end_undo_group();
                                     ed.mode = Mode::Normal;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char('z') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                    // Common muscle memory; Vim uses 'u' in normal, but support Ctrl-Z here in insert
+                                    if ed.undo() {
+                                        needs_redraw = true;
+                                    }
+                                }
+                                KeyCode::Char('g') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                    // Start Ctrl-g sequence
+                                    insert_undo_break_pending = true;
+                                }
+                                KeyCode::Char('u') if insert_undo_break_pending => {
+                                    // Ctrl-g u: break undo group in insert mode
+                                    ed.end_undo_group();
+                                    insert_undo_break_pending = false;
                                     needs_redraw = true;
                                 }
                                 KeyCode::Enter => {
@@ -131,6 +149,7 @@ pub fn run() -> io::Result<()> {
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) => {
+                                    insert_undo_break_pending = false;
                                     if !modifiers.contains(KeyModifiers::CONTROL) && !c.is_control()
                                     {
                                         ed.insert_char(c);
@@ -140,6 +159,11 @@ pub fn run() -> io::Result<()> {
                                 _ => {}
                             },
                             Mode::Normal => match code {
+                                KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                    if ed.redo() {
+                                        needs_redraw = true;
+                                    }
+                                }
                                 KeyCode::Up => {
                                     ed.apply_action(Action::MoveUp);
                                     needs_redraw = true;
