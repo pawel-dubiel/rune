@@ -172,12 +172,14 @@ impl Editor {
 
     pub fn insert_char(&mut self, ch: char) {
         use unicode_width::UnicodeWidthChar;
+        self.on_edit_start();
         self.buf.insert_char(self.cx, self.cy, ch);
         self.cx += UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
         self.dirty = true;
     }
 
     pub fn insert_newline(&mut self) {
+        self.on_edit_start();
         let x = self.cx;
         self.buf.insert_newline(x, self.cy);
         self.cy += 1;
@@ -186,6 +188,7 @@ impl Editor {
     }
 
     pub fn delete_char(&mut self) {
+        self.on_edit_start();
         if self.cx > 0 {
             self.cx = self.buf.delete_prev(self.cx, self.cy);
             self.dirty = true;
@@ -256,6 +259,7 @@ impl Editor {
                 self.mode = Mode::Insert;
             }
             OpenBelow => {
+                self.on_edit_start();
                 let len = self.buf.line_width(self.cy);
                 self.buf.insert_newline(len, self.cy);
                 self.cy += 1;
@@ -264,16 +268,19 @@ impl Editor {
                 self.mode = Mode::Insert;
             }
             OpenAbove => {
+                self.on_edit_start();
                 self.buf.insert_newline(0, self.cy);
                 self.cx = 0;
                 self.dirty = true;
                 self.mode = Mode::Insert;
             }
             DeleteCharUnder => {
+                self.on_edit_start();
                 self.buf.delete_at(self.cx, self.cy);
                 self.dirty = true;
             }
             DeleteLine => {
+                self.on_edit_start();
                 if !self.buf.rows.is_empty() {
                     self.buf.rows.remove(self.cy);
                     if self.buf.rows.is_empty() {
@@ -650,42 +657,38 @@ impl Editor {
         inclusive: bool,
         op: Option<(Action, usize)>,
     ) {
-        if let Some((op_kind, op_count)) = op.or_else(|| self.op_pending.take()) {
+        if let Some((op_kind, _op_count)) = op.or_else(|| self.op_pending.take()) {
             // When operator pending, the motion count applies to the motion if present.
-            let mut target_col = target.1;
-            let mut target_line = target.0;
-            let mut last_col = self.cx;
-            let mut last_line = self.cy;
-            // Apply operator count by repeating deletion over repeated motions
-            for _ in 0..op_count {
-                let (sy, sx, ey, ex) = if (target_line > last_line)
-                    || (target_line == last_line && target_col >= last_col)
-                {
-                    (last_line, last_col, target_line, target_col)
-                } else {
-                    (target_line, target_col, last_line, last_col)
-                };
-                if (ey, ex) > (sy, sx) {
-                    match op_kind {
-                        Action::OperatorDelete | Action::OperatorChange => {
-                            self.delete_range((sy, sx), (ey, ex), inclusive);
-                            self.cx = sx;
-                            self.cy = sy;
-                            self.dirty = true;
-                            if matches!(op_kind, Action::OperatorChange) {
-                                self.mode = Mode::Insert;
-                            }
+            if matches!(op_kind, Action::OperatorDelete | Action::OperatorChange) {
+                self.on_edit_start();
+            }
+            let target_col = target.1;
+            let target_line = target.0;
+            let last_col = self.cx;
+            let last_line = self.cy;
+            let (sy, sx, ey, ex) = if (target_line > last_line)
+                || (target_line == last_line && target_col >= last_col)
+            {
+                (last_line, last_col, target_line, target_col)
+            } else {
+                (target_line, target_col, last_line, last_col)
+            };
+            if (ey, ex) > (sy, sx) {
+                match op_kind {
+                    Action::OperatorDelete | Action::OperatorChange => {
+                        self.delete_range((sy, sx), (ey, ex), inclusive);
+                        self.cx = sx;
+                        self.cy = sy;
+                        self.dirty = true;
+                        if matches!(op_kind, Action::OperatorChange) {
+                            self.mode = Mode::Insert;
                         }
-                        Action::OperatorYank => {
-                            self.clipboard = self.extract_range((sy, sx), (ey, ex), inclusive);
-                        }
-                        _ => {}
                     }
+                    Action::OperatorYank => {
+                        self.clipboard = self.extract_range((sy, sx), (ey, ex), inclusive);
+                    }
+                    _ => {}
                 }
-                last_col = self.cx;
-                last_line = self.cy;
-                target_col = target.1; // fixed target for repeated operator; simple approach
-                target_line = target.0;
             }
         } else if op.is_none() {
             self.cx = target.1;
