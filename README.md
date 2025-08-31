@@ -99,6 +99,14 @@ General options:
 - Lint: `cargo clippy`
 - Toolchain pinned in `rust-toolchain.toml` to stable.
 
+### Git Hooks
+- Enable pre-commit hook:
+  - `make hooks-install`
+  - This runs on each commit: `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo test`.
+- You can temporarily skip checks by setting env vars:
+  - `SKIP_HOOKS=1 git commit -m "..."` to skip everything
+  - `SKIP_TESTS=1 git commit -m "..."` to skip tests only
+
 ## macOS App Bundle
 If you want a double-clickable app that opens Terminal and runs Rune:
 

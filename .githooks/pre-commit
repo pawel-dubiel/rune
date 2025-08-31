@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skip with SKIP_HOOKS=1
+if [[ "${SKIP_HOOKS:-}" == "1" ]]; then
+  echo "pre-commit: SKIP_HOOKS=1 set; skipping checks."
+  exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "pre-commit: cargo not found; skipping Rust checks."
+  exit 0
+fi
+
+echo "pre-commit: formatting check (cargo fmt)"
+cargo fmt --all -- --check
+
+echo "pre-commit: lint (cargo clippy -D warnings)"
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+if [[ "${SKIP_TESTS:-}" == "1" ]]; then
+  echo "pre-commit: SKIP_TESTS=1 set; skipping tests."
+  exit 0
+fi
+
+echo "pre-commit: tests (cargo test)"
+cargo test --workspace --all-features --all-targets --quiet
+
+echo "pre-commit: all checks passed."
+

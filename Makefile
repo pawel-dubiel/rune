@@ -25,3 +25,8 @@ app-macos: build
 
 clean-app:
 	rm -rf dist/$(APP_NAME).app
+
+.PHONY: hooks-install
+hooks-install:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit || true
