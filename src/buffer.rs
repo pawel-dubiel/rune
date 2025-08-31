@@ -184,6 +184,97 @@ impl Buffer {
         }
         len
     }
+
+    pub fn next_word_start(&self, col: usize, y: usize) -> usize {
+        let Some(row) = self.rows.get(y) else { return col; };
+        let bi = self.col_to_byte(y, col);
+        let mut found = None::<usize>;
+        let mut cur_end: Option<usize> = None;
+        for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+            let end = i + seg.len();
+            let is_word = seg.chars().any(|c| c.is_alphanumeric() || c == '_');
+            if cur_end.is_none() && i <= bi && bi < end {
+                // We are in the current segment
+                cur_end = Some(end);
+                continue;
+            }
+            if i >= bi {
+                if let Some(e) = cur_end {
+                    if i >= e && is_word {
+                        found = Some(i);
+                        break;
+                    }
+                } else if is_word {
+                    found = Some(i);
+                    break;
+                }
+            }
+        }
+        let target_b = found.unwrap_or(row.len());
+        // Recompute from start for simplicity
+        let mut acc2 = 0usize;
+        let mut bpos = 0usize;
+        for g in row.graphemes(true) {
+            if bpos >= target_b { break; }
+            acc2 += UnicodeWidthStr::width(g).max(1);
+            bpos += g.len();
+        }
+        acc2
+    }
+
+    pub fn prev_word_start(&self, col: usize, y: usize) -> usize {
+        let Some(row) = self.rows.get(y) else { return col; };
+        let bi = self.col_to_byte(y, col);
+        let mut prev = None::<usize>;
+        for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+            if i >= bi { break; }
+            if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
+                prev = Some(i);
+            }
+        }
+        let target_b = prev.unwrap_or(0);
+        let mut acc2 = 0usize;
+        let mut bpos = 0usize;
+        for g in row.graphemes(true) {
+            if bpos >= target_b { break; }
+            acc2 += UnicodeWidthStr::width(g).max(1);
+            bpos += g.len();
+        }
+        acc2
+    }
+
+    pub fn end_of_word(&self, col: usize, y: usize) -> usize {
+        let Some(row) = self.rows.get(y) else { return col; };
+        let bi = self.col_to_byte(y, col);
+        let mut _cur_word_start = None::<usize>;
+        let mut cur_word_end = None::<usize>;
+        let mut after = None::<usize>;
+        for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+            let seg_is_word = seg.chars().any(|c| c.is_alphanumeric() || c == '_');
+            let end = i + seg.len();
+            if seg_is_word && i <= bi && bi < end {
+                _cur_word_start = Some(i);
+                cur_word_end = Some(end);
+                break;
+            }
+            if i >= bi && seg_is_word {
+                after = Some(end);
+                break;
+            }
+        }
+        let target_b = cur_word_end.or(after).unwrap_or(row.len());
+        // Convert byte to col, but return the next column after end to be inclusive-friendly
+        let mut acc2 = 0usize;
+        let mut bpos = 0usize;
+        for g in row.graphemes(true) {
+            let next_b = bpos + g.len();
+            let w = UnicodeWidthStr::width(g).max(1);
+            if next_b > target_b { break; }
+            acc2 += w;
+            bpos = next_b;
+        }
+        acc2
+    }
 }
 
 impl std::fmt::Display for Buffer {

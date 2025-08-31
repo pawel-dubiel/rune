@@ -24,6 +24,10 @@ pub enum Action {
     OpenAbove,
     DeleteCharUnder,
     DeleteLine,
+    OperatorDelete,
+    MoveWordForward,
+    MoveWordBackward,
+    MoveEndWord,
     CommandPrompt,
 }
 
@@ -44,6 +48,10 @@ pub fn default_keymap() -> HashMap<String, Action> {
     m.insert("O".into(), OpenAbove);
     m.insert("x".into(), DeleteCharUnder);
     m.insert("dd".into(), DeleteLine);
+    m.insert("d".into(), OperatorDelete);
+    m.insert("w".into(), MoveWordForward);
+    m.insert("b".into(), MoveWordBackward);
+    m.insert("e".into(), MoveEndWord);
     m.insert(":".into(), CommandPrompt);
     m
 }
@@ -65,6 +73,10 @@ fn parse_action(name: &str) -> Option<Action> {
         "open_above" | "O" => Some(OpenAbove),
         "delete_char" | "x" => Some(DeleteCharUnder),
         "delete_line" | "dd" => Some(DeleteLine),
+        "delete" | "d" => Some(OperatorDelete),
+        "move_word_forward" | "w" => Some(MoveWordForward),
+        "move_word_backward" | "b" => Some(MoveWordBackward),
+        "move_end_word" | "e" => Some(MoveEndWord),
         "command" | ":" => Some(CommandPrompt),
         _ => None,
     }

@@ -41,9 +41,15 @@ pub fn run() -> io::Result<()> {
                 needs_redraw = false;
             }
             // Compute dynamic timeout for status expiry to avoid spurious redraws
-            let timeout = ui
-                .time_until_status_expiry(&ed)
-                .unwrap_or(Duration::from_millis(1_000_000));
+            let mut timeout = Duration::from_millis(1_000_000);
+            if let Some(t) = ui.time_until_status_expiry(&ed) {
+                timeout = std::cmp::min(timeout, t);
+            }
+            // Sequence timeout for pending multi-key sequences
+            const SEQ_TIMEOUT_MS: u64 = 1000;
+            if let Some(t) = ed.time_until_pending_timeout(SEQ_TIMEOUT_MS) {
+                timeout = std::cmp::min(timeout, t);
+            }
             if poll(timeout)? {
                 match read()? {
                     Event::Key(KeyEvent {
@@ -168,21 +174,16 @@ pub fn run() -> io::Result<()> {
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                                    if let Some(p) = ed.pending.take() {
-                                        let seq = format!("{}{}", p, c);
-                                        if let Some(&act) = ed.keymap.get(&seq) {
-                                            if matches!(act, Action::CommandPrompt) {
-                                                if let Ok(Some(cmd)) =
-                                                    ui.prompt_command(&mut ed, &mut stdout)
-                                                {
+                                    match ed.process_normal_char(c) {
+                                        crate::editor::NormalInputResult::CommandPrompt => {
+                                            if let Ok(Some(cmd)) = ui.prompt_command(&mut ed, &mut stdout) {
+                                                if !ed.execute_ex_command(&cmd) {
                                                     match cmd.as_str() {
                                                         "w" => {
                                                             let _ = ed.save();
                                                             needs_redraw = true;
                                                         }
-                                                        "q" => {
-                                                            break;
-                                                        }
+                                                        "q" => break,
                                                         "wq" | "x" => {
                                                             let _ = ed.save();
                                                             break;
@@ -192,84 +193,13 @@ pub fn run() -> io::Result<()> {
                                                             needs_redraw = true;
                                                         }
                                                     }
-                                                }
-                                            } else {
-                                                ed.apply_action(act);
-                                                needs_redraw = true;
-                                            }
-                                        } else {
-                                            let prev = p.to_string();
-                                            if let Some(&act) = ed.keymap.get(&prev) {
-                                                ed.apply_action(act);
-                                                needs_redraw = true;
-                                            }
-                                            let cur = c.to_string();
-                                            if (c == 'g' && ed.keymap.contains_key("gg"))
-                                                || (c == 'd' && ed.keymap.contains_key("dd"))
-                                            {
-                                                ed.pending = Some(c);
-                                            } else if let Some(&act) = ed.keymap.get(&cur) {
-                                                if matches!(act, Action::CommandPrompt) {
-                                                    if let Ok(Some(cmd)) =
-                                                        ui.prompt_command(&mut ed, &mut stdout)
-                                                    {
-                                                        match cmd.as_str() {
-                                                            "w" => {
-                                                                let _ = ed.save();
-                                                                needs_redraw = true;
-                                                            }
-                                                            "q" => {
-                                                                break;
-                                                            }
-                                                            "wq" | "x" => {
-                                                                let _ = ed.save();
-                                                                break;
-                                                            }
-                                                            _ => {
-                                                                ed.set_status("Unknown command");
-                                                                needs_redraw = true;
-                                                            }
-                                                        }
-                                                    }
                                                 } else {
-                                                    ed.apply_action(act);
                                                     needs_redraw = true;
                                                 }
                                             }
                                         }
-                                    } else {
-                                        let s = c.to_string();
-                                        if (c == 'g' && ed.keymap.contains_key("gg"))
-                                            || (c == 'd' && ed.keymap.contains_key("dd"))
-                                        {
-                                            ed.pending = Some(c);
-                                        } else if let Some(&act) = ed.keymap.get(&s) {
-                                            if matches!(act, Action::CommandPrompt) {
-                                                if let Ok(Some(cmd)) =
-                                                    ui.prompt_command(&mut ed, &mut stdout)
-                                                {
-                                                    match cmd.as_str() {
-                                                        "w" => {
-                                                            let _ = ed.save();
-                                                            needs_redraw = true;
-                                                        }
-                                                        "q" => {
-                                                            break;
-                                                        }
-                                                        "wq" | "x" => {
-                                                            let _ = ed.save();
-                                                            break;
-                                                        }
-                                                        _ => {
-                                                            ed.set_status("Unknown command");
-                                                            needs_redraw = true;
-                                                        }
-                                                    }
-                                                }
-                                            } else {
-                                                ed.apply_action(act);
-                                                needs_redraw = true;
-                                            }
+                                        crate::editor::NormalInputResult::None => {
+                                            needs_redraw = true;
                                         }
                                     }
                                 }
@@ -293,6 +223,41 @@ pub fn run() -> io::Result<()> {
                 {
                     ui.clear_cache();
                     needs_redraw = true;
+                }
+                // Pending sequence may have timed out
+                if ed
+                    .time_until_pending_timeout(SEQ_TIMEOUT_MS)
+                    .map(|d| d.is_zero())
+                    .unwrap_or(false)
+                {
+                    match ed.process_pending_timeout() {
+                        crate::editor::NormalInputResult::CommandPrompt => {
+                            if let Ok(Some(cmd)) = ui.prompt_command(&mut ed, &mut stdout) {
+                                if !ed.execute_ex_command(&cmd) {
+                                    match cmd.as_str() {
+                                        "w" => {
+                                            let _ = ed.save();
+                                            needs_redraw = true;
+                                        }
+                                        "q" => break,
+                                        "wq" | "x" => {
+                                            let _ = ed.save();
+                                            break;
+                                        }
+                                        _ => {
+                                            ed.set_status("Unknown command");
+                                            needs_redraw = true;
+                                        }
+                                    }
+                                } else {
+                                    needs_redraw = true;
+                                }
+                            }
+                        }
+                        crate::editor::NormalInputResult::None => {
+                            needs_redraw = true;
+                        }
+                    }
                 }
             }
         }
