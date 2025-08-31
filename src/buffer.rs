@@ -89,9 +89,7 @@ impl Buffer {
             rows.push(String::new());
         }
         Self { rows }
-}
-
- 
+    }
 
     pub fn to_string(&self) -> String {
         self.rows.join("\n")

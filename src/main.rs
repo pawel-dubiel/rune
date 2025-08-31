@@ -7,4 +7,3 @@ mod ui;
 fn main() -> std::io::Result<()> {
     app::run()
 }
-

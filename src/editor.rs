@@ -128,24 +128,39 @@ impl Editor {
                 }
             }
             MoveUp => {
-                if self.cy > 0 { self.cy -= 1; }
+                if self.cy > 0 {
+                    self.cy -= 1;
+                }
             }
             MoveDown => {
-                if self.cy + 1 < self.buf.rows.len() { self.cy += 1; }
+                if self.cy + 1 < self.buf.rows.len() {
+                    self.cy += 1;
+                }
             }
-            LineStart => { self.cx = 0; }
-            LineEnd => { self.cx = self.buf.line_width(self.cy); }
-            GotoTop => { self.cy = 0; self.cx = 0; }
+            LineStart => {
+                self.cx = 0;
+            }
+            LineEnd => {
+                self.cx = self.buf.line_width(self.cy);
+            }
+            GotoTop => {
+                self.cy = 0;
+                self.cx = 0;
+            }
             GotoBottom => {
                 if !self.buf.rows.is_empty() {
                     self.cy = self.buf.rows.len() - 1;
                     self.cx = self.buf.line_width(self.cy);
                 }
             }
-            EnterInsert => { self.mode = Mode::Insert; }
+            EnterInsert => {
+                self.mode = Mode::Insert;
+            }
             Append => {
                 let len = self.buf.line_width(self.cy);
-                if self.cx < len { self.cx += 1; }
+                if self.cx < len {
+                    self.cx += 1;
+                }
                 self.mode = Mode::Insert;
             }
             OpenBelow => {
