@@ -25,6 +25,8 @@ pub enum Action {
     DeleteCharUnder,
     DeleteLine,
     OperatorDelete,
+    OperatorChange,
+    OperatorYank,
     MoveWordForward,
     MoveWordBackward,
     MoveEndWord,
@@ -49,6 +51,8 @@ pub fn default_keymap() -> HashMap<String, Action> {
     m.insert("x".into(), DeleteCharUnder);
     m.insert("dd".into(), DeleteLine);
     m.insert("d".into(), OperatorDelete);
+    m.insert("c".into(), OperatorChange);
+    m.insert("y".into(), OperatorYank);
     m.insert("w".into(), MoveWordForward);
     m.insert("b".into(), MoveWordBackward);
     m.insert("e".into(), MoveEndWord);
@@ -74,6 +78,8 @@ fn parse_action(name: &str) -> Option<Action> {
         "delete_char" | "x" => Some(DeleteCharUnder),
         "delete_line" | "dd" => Some(DeleteLine),
         "delete" | "d" => Some(OperatorDelete),
+        "change" | "c" => Some(OperatorChange),
+        "yank" | "y" => Some(OperatorYank),
         "move_word_forward" | "w" => Some(MoveWordForward),
         "move_word_backward" | "b" => Some(MoveWordBackward),
         "move_end_word" | "e" => Some(MoveEndWord),

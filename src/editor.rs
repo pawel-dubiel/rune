@@ -20,6 +20,7 @@ pub struct Editor {
     pub pending: String,
     pub pending_started: Option<Instant>,
     pub op_pending: Option<(Action, usize)>,
+    pub clipboard: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,7 @@ impl Editor {
             pending: String::new(),
             pending_started: None,
             op_pending: None,
+            clipboard: String::new(),
         };
         let cfg = load_config(ed.keymap.clone());
         ed.keymap = cfg.keymap;
@@ -214,6 +216,12 @@ impl Editor {
                 // Operator pending until a motion or target is supplied
                 self.op_pending = Some((Action::OperatorDelete, 1));
             }
+            OperatorChange => {
+                self.op_pending = Some((Action::OperatorChange, 1));
+            }
+            OperatorYank => {
+                self.op_pending = Some((Action::OperatorYank, 1));
+            }
             MoveWordForward | MoveWordBackward | MoveEndWord => {
                 self.apply_motion(act, 1, None);
             }
@@ -293,27 +301,44 @@ impl Editor {
                             }
                         }
                         // Operator/motion handling
-                        if let Some((Action::OperatorDelete, n0)) = self.op_pending.take() {
+                        if let Some((op_kind, n0)) = self.op_pending.take() {
                             let effective = count.unwrap_or(n0);
-                            match act {
-                                Action::OperatorDelete | Action::DeleteLine => {
+                            match (op_kind, act) {
+                                (Action::OperatorDelete, Action::OperatorDelete) | (Action::OperatorDelete, Action::DeleteLine) => {
                                     self.apply_action_count(Action::DeleteLine, effective);
                                 }
-                                Action::MoveWordForward
-                                | Action::MoveWordBackward
-                                | Action::MoveEndWord
-                                | Action::LineStart
-                                | Action::LineEnd => {
-                                    self.apply_motion(act, effective, Some(effective));
+                                (Action::OperatorChange, Action::OperatorChange) => {
+                                    // Change whole line(s)
+                                    for _ in 0..effective.max(1) {
+                                        if let Some(row) = self.buf.rows.get_mut(self.cy) { row.clear(); }
+                                        self.cx = 0;
+                                        self.dirty = true;
+                                        if self.cy + 1 < self.buf.rows.len() { self.cy += 1; }
+                                    }
+                                    self.mode = Mode::Insert;
+                                    self.cy = self.cy.saturating_sub(effective.saturating_sub(1));
                                 }
-                                _ => {
+                                (Action::OperatorYank, Action::OperatorYank) => {
+                                    // Yank whole line(s)
+                                    let end = (self.cy + effective).min(self.buf.rows.len());
+                                    self.clipboard = self.buf.rows[self.cy..end].join("\n");
+                                }
+                                (opk, Action::MoveWordForward)
+                                | (opk, Action::MoveWordBackward)
+                                | (opk, Action::MoveEndWord)
+                                | (opk, Action::LineStart)
+                                | (opk, Action::LineEnd) => {
+                                    self.apply_motion(act, effective, Some((opk, effective)));
+                                }
+                                (_, other) => {
                                     // Fallback, apply action normally and drop operator
-                                    self.apply_action_count(act, effective);
+                                    self.apply_action_count(other, effective);
                                 }
                             }
-                        } else if matches!(act, Action::OperatorDelete) {
-                            // 'd' alone becomes operator-pending
-                            self.op_pending = Some((Action::OperatorDelete, count.unwrap_or(1)));
+                        } else if matches!(act, Action::OperatorDelete | Action::OperatorChange | Action::OperatorYank) {
+                            // operator becomes pending
+                            let opk = act;
+                            self.op_pending = Some((opk, count.unwrap_or(1)));
                             self.pending.clear();
                             self.pending_started = Some(Instant::now());
                             return NormalInputResult::None;
@@ -378,7 +403,7 @@ impl Editor {
                                 | Action::MoveEndWord
                                 | Action::LineStart
                                 | Action::LineEnd => {
-                                    self.apply_motion(act, effective, Some(effective));
+                                    self.apply_motion(act, effective, Some((Action::OperatorDelete, effective)));
                                 }
                                 _ => {
                                     self.apply_action_count(act, effective);
@@ -390,23 +415,23 @@ impl Editor {
                             self.op_pending = None;
                             self.apply_action_count(act, n);
                         }
-                    } else if let Some((Action::OperatorDelete, n0)) = self.op_pending.take() {
-                        let effective = n.max(n0);
-                        match act {
-                            Action::OperatorDelete | Action::DeleteLine => {
-                                self.apply_action_count(Action::DeleteLine, effective);
+                        } else if let Some((op_kind, n0)) = self.op_pending.take() {
+                            let effective = n.max(n0);
+                            match act {
+                                Action::OperatorDelete | Action::DeleteLine => {
+                                    self.apply_action_count(Action::DeleteLine, effective);
+                                }
+                                Action::MoveWordForward
+                                | Action::MoveWordBackward
+                                | Action::MoveEndWord
+                                | Action::LineStart
+                                | Action::LineEnd => {
+                                    self.apply_motion(act, effective, Some((op_kind, effective)));
+                                }
+                                _ => {
+                                    self.apply_action_count(act, effective);
+                                }
                             }
-                            Action::MoveWordForward
-                            | Action::MoveWordBackward
-                            | Action::MoveEndWord
-                            | Action::LineStart
-                            | Action::LineEnd => {
-                                self.apply_motion(act, effective, Some(effective));
-                            }
-                            _ => {
-                                self.apply_action_count(act, effective);
-                            }
-                        }
                     } else {
                         self.op_pending = None;
                         self.apply_action_count(act, n);
@@ -444,89 +469,277 @@ impl Editor {
         self.clamp_cursor();
     }
 
-    fn apply_motion(&mut self, act: Action, count: usize, op_count: Option<usize>) {
+    fn apply_motion(&mut self, act: Action, count: usize, op: Option<(Action, usize)>) {
         let n = count.max(1);
         match act {
             Action::MoveWordForward => {
+                let mut y = self.cy;
                 let mut target_c = self.cx;
                 for _ in 0..n {
-                    let next = self.buf.next_word_start(target_c, self.cy);
-                    if next == target_c {
+                    let cur_next = self.buf.next_word_start(target_c, y);
+                    let next_line_word = if cur_next == target_c {
+                        if let Some((Action::OperatorDelete, _)) = op {
+                            if y + 1 < self.buf.rows.len() { Some((y + 1, 0)) } else { None }
+                        } else {
+                            self.find_next_word_start_from(y + 1)
+                        }
+                    } else {
+                        Some((y, cur_next))
+                    };
+                    if let Some((ny, nx)) = next_line_word {
+                        y = ny;
+                        target_c = nx;
+                    } else {
                         break;
                     }
-                    target_c = next;
                 }
-                self.apply_range_or_move(target_c, false, op_count);
+                self.apply_range_or_move((y, target_c), false, op);
             }
             Action::MoveWordBackward => {
+                let mut y = self.cy;
                 let mut target_c = self.cx;
                 for _ in 0..n {
-                    let prev = self.buf.prev_word_start(target_c, self.cy);
-                    if prev == target_c { break; }
-                    target_c = prev;
+                    let cur_prev = self.buf.prev_word_start(target_c, y);
+                    let prev_line_word = if cur_prev == target_c {
+                        self.find_prev_word_start_from(y.saturating_sub(1))
+                    } else {
+                        Some((y, cur_prev))
+                    };
+                    if let Some((ny, nx)) = prev_line_word {
+                        y = ny;
+                        target_c = nx;
+                    } else { break; }
                 }
-                self.apply_range_or_move(target_c, false, op_count);
+                self.apply_range_or_move((y, target_c), false, op);
             }
             Action::MoveEndWord => {
+                let mut y = self.cy;
                 let mut target_c = self.cx;
                 for _ in 0..n {
-                    let end = self.buf.end_of_word(target_c, self.cy);
-                    if end == target_c { break; }
-                    target_c = end;
+                    let cur_end = self.buf.end_of_word(target_c, y);
+                    // If no progress, go to end of first word in next lines
+                    let next_line_end = if cur_end == target_c {
+                        self.find_next_word_end_from(y + 1)
+                    } else {
+                        Some((y, cur_end))
+                    };
+                    if let Some((ny, nx)) = next_line_end {
+                        y = ny;
+                        target_c = nx;
+                    } else { break; }
                 }
-                self.apply_range_or_move(target_c, true, op_count);
+                self.apply_range_or_move((y, target_c), true, op);
             }
             Action::LineStart => {
-                self.apply_range_or_move(0, false, op_count);
+                self.apply_range_or_move((self.cy, 0), false, op);
             }
             Action::LineEnd => {
                 let end = self.buf.line_width(self.cy);
-                self.apply_range_or_move(end, true, op_count);
+                self.apply_range_or_move((self.cy, end), true, op);
             }
             _ => {
                 // Fallback
-                if op_count.is_none() {
+                if op.is_none() {
                     self.apply_action_count(act, n);
                 }
             }
         }
     }
 
-    fn apply_range_or_move(&mut self, target_col: usize, inclusive: bool, op_count: Option<usize>) {
-        if let Some(op_count) = op_count.or_else(|| self.op_pending.take().map(|(_, n)| n)) {
+    fn apply_range_or_move(&mut self, target: (usize, usize), inclusive: bool, op: Option<(Action, usize)>) {
+        if let Some((op_kind, op_count)) = op.or_else(|| self.op_pending.take()) {
             // When operator pending, the motion count applies to the motion if present.
-            let mut target = target_col;
-            let mut last = self.cx;
+            let mut target_col = target.1;
+            let mut target_line = target.0;
+            let mut last_col = self.cx;
+            let mut last_line = self.cy;
             // Apply operator count by repeating deletion over repeated motions
             for _ in 0..op_count {
-                let (start, end) = if target >= last {
-                    (last, target)
+                let (sy, sx, ey, ex) = if (target_line > last_line) || (target_line == last_line && target_col >= last_col) {
+                    (last_line, last_col, target_line, target_col)
                 } else {
-                    (target, last)
+                    (target_line, target_col, last_line, last_col)
                 };
-                if end > start {
-                    let start_b = self.buf.col_to_byte(self.cy, start);
-                    let end_b = if inclusive {
-                        // include the grapheme at target
-                        let after = self.buf.next_col(target, self.cy);
-                        self.buf.col_to_byte(self.cy, after)
-                    } else {
-                        self.buf.col_to_byte(self.cy, end)
-                    };
-                    if let Some(row) = self.buf.rows.get_mut(self.cy) {
-                        if start_b <= row.len() && end_b <= row.len() && start_b < end_b {
-                            row.replace_range(start_b..end_b, "");
-                            self.cx = start;
+                if (ey, ex) > (sy, sx) {
+                    match op_kind {
+                        Action::OperatorDelete | Action::OperatorChange => {
+                            self.delete_range((sy, sx), (ey, ex), inclusive);
+                            self.cx = sx;
+                            self.cy = sy;
                             self.dirty = true;
+                            if matches!(op_kind, Action::OperatorChange) {
+                                self.mode = Mode::Insert;
+                            }
                         }
+                        Action::OperatorYank => {
+                            self.clipboard = self.extract_range((sy, sx), (ey, ex), inclusive);
+                        }
+                        _ => {}
                     }
                 }
-                last = self.cx;
-                target = target_col; // fixed target for repeated operator; simple approach
+                last_col = self.cx;
+                last_line = self.cy;
+                target_col = target.1; // fixed target for repeated operator; simple approach
+                target_line = target.0;
             }
-        } else if op_count.is_none() {
-            self.cx = target_col;
+        } else if op.is_none() {
+            self.cx = target.1;
+            self.cy = target.0;
         }
+    }
+
+    fn extract_range(&self, start: (usize, usize), end: (usize, usize), inclusive: bool) -> String {
+        let (sy, sx) = start;
+        let (ey, ex0) = end;
+        if sy == ey {
+            let start_b = self.buf.col_to_byte(sy, sx);
+            let mut end_b = self.buf.col_to_byte(ey, ex0);
+            if inclusive {
+                let after = self.buf.next_col(ex0, ey);
+                end_b = self.buf.col_to_byte(ey, after);
+            }
+            let row = &self.buf.rows[sy];
+            return row.get(start_b..end_b).unwrap_or("").to_string();
+        }
+        let mut out = String::new();
+        // first line fragment
+        let start_b = self.buf.col_to_byte(sy, sx);
+        out.push_str(&self.buf.rows[sy][start_b..]);
+        out.push('\n');
+        // intermediate lines
+        for y in (sy + 1)..ey {
+            out.push_str(&self.buf.rows[y]);
+            out.push('\n');
+        }
+        // end line fragment
+        let mut end_b = self.buf.col_to_byte(ey, ex0);
+        if inclusive {
+            let after = self.buf.next_col(ex0, ey);
+            end_b = self.buf.col_to_byte(ey, after);
+        }
+        out.push_str(&self.buf.rows[ey][..end_b]);
+        out
+    }
+
+    fn delete_range(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
+        let (sy, sx) = start;
+        let (ey, ex0) = end;
+        if sy == ey {
+            let start_b = self.buf.col_to_byte(sy, sx);
+            let mut end_b = self.buf.col_to_byte(ey, ex0);
+            if inclusive {
+                let after = self.buf.next_col(ex0, ey);
+                end_b = self.buf.col_to_byte(ey, after);
+            }
+            if let Some(row) = self.buf.rows.get_mut(sy) {
+                if start_b < end_b && end_b <= row.len() {
+                    row.replace_range(start_b..end_b, "");
+                }
+            }
+            return;
+        }
+        // Multi-line delete: remove tail of start line, whole middle lines, head of end line, then merge
+        let start_b = self.buf.col_to_byte(sy, sx);
+        let mut tail = String::new();
+        // Capture end tail first
+        let mut end_b = self.buf.col_to_byte(ey, ex0);
+        if inclusive {
+            let after = self.buf.next_col(ex0, ey);
+            end_b = self.buf.col_to_byte(ey, after);
+        }
+        if end_b <= self.buf.rows[ey].len() {
+            tail.push_str(&self.buf.rows[ey][end_b..]);
+        }
+        // Truncate start line at start_b
+        if let Some(row) = self.buf.rows.get_mut(sy) {
+            if start_b <= row.len() {
+                row.truncate(start_b);
+            }
+        }
+        // Remove intermediate lines including ey
+        for _ in sy + 1..=ey {
+            self.buf.rows.remove(sy + 1);
+        }
+        // Append tail from former end line
+        if let Some(row) = self.buf.rows.get_mut(sy) {
+            row.push_str(&tail);
+        }
+    }
+
+    fn find_next_word_start_from(&self, mut y: usize) -> Option<(usize, usize)> {
+        use unicode_segmentation::UnicodeSegmentation;
+        while y < self.buf.rows.len() {
+            let row = &self.buf.rows[y];
+            for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+                if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
+                    // convert i (byte) to col
+                    let mut acc = 0usize;
+                    let mut bpos = 0usize;
+                    for g in row.graphemes(true) {
+                        if bpos >= i { break; }
+                        acc += unicode_width::UnicodeWidthStr::width(g).max(1);
+                        bpos += g.len();
+                    }
+                    return Some((y, acc));
+                }
+            }
+            y += 1;
+        }
+        None
+    }
+
+    fn find_prev_word_start_from(&self, y: usize) -> Option<(usize, usize)> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut yy = y;
+        loop {
+            if let Some(row) = self.buf.rows.get(yy) {
+                let mut last: Option<usize> = None;
+                for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+                    if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
+                        last = Some(i);
+                    }
+                }
+                if let Some(i) = last {
+                    // byte to col
+                    let mut acc = 0usize;
+                    let mut bpos = 0usize;
+                    for g in row.graphemes(true) {
+                        if bpos >= i { break; }
+                        acc += unicode_width::UnicodeWidthStr::width(g).max(1);
+                        bpos += g.len();
+                    }
+                    return Some((yy, acc));
+                }
+            }
+            if yy == 0 { break; }
+            yy -= 1;
+        }
+        None
+    }
+
+    fn find_next_word_end_from(&self, mut y: usize) -> Option<(usize, usize)> {
+        use unicode_segmentation::UnicodeSegmentation;
+        while y < self.buf.rows.len() {
+            let row = &self.buf.rows[y];
+            for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
+                if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
+                    let end_b = i + seg.len();
+                    // byte to col including end
+                    let mut acc = 0usize;
+                    let mut bpos = 0usize;
+                    for g in row.graphemes(true) {
+                        let next_b = bpos + g.len();
+                        let w = unicode_width::UnicodeWidthStr::width(g).max(1);
+                        if next_b > end_b { break; }
+                        acc += w;
+                        bpos = next_b;
+                    }
+                    return Some((y, acc));
+                }
+            }
+            y += 1;
+        }
+        None
     }
 
     pub fn process_pending_timeout(&mut self) -> NormalInputResult {
@@ -751,6 +964,43 @@ mod tests {
         let start_text = ed.buf.rows[0].clone();
         for ch in "2dw".chars() { let _ = ed.process_normal_char(ch); }
         assert!(ed.buf.rows[0].len() < start_text.len());
+    }
+
+    #[test]
+    fn dw_at_eol_joins_next_line() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["foo".into(), "  bar baz".into()];
+        ed.cy = 0;
+        ed.cx = ed.buf.line_width(0); // end of first line
+        for ch in "dw".chars() { let _ = ed.process_normal_char(ch); }
+        assert_eq!(ed.buf.rows, vec![String::from("foo  bar baz")]);
+        assert_eq!(ed.cy, 0);
+    }
+
+    #[test]
+    fn cw_changes_word_and_enters_insert() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["hello world".into()];
+        ed.cy = 0;
+        ed.cx = 0;
+        for ch in "cw".chars() { let _ = ed.process_normal_char(ch); }
+        assert_eq!(ed.buf.rows[0], "world");
+        assert!(matches!(ed.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn y_dollar_yanks_to_clipboard() {
+        let mut ed = Editor::new().unwrap();
+        ed.mode = Mode::Normal;
+        ed.buf.rows = vec!["hello world".into()];
+        ed.cy = 0;
+        ed.cx = 6; // before 'w'
+        for ch in "y$".chars() { let _ = ed.process_normal_char(ch); }
+        assert_eq!(ed.clipboard, "world");
+        // content remains unchanged
+        assert_eq!(ed.buf.rows[0], "hello world");
     }
 
     #[test]
