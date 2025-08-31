@@ -322,9 +322,24 @@ impl Editor {
 
     fn apply_action_count(&mut self, act: Action, count: usize) {
         let n = count.max(1);
+        // Only group counts for editing actions; movement-only counts should not create undo steps
+        if n > 1 && !self.count_group_active && Self::is_editing_action(act) {
+            let snap = EditorSnapshot::from_editor(self);
+            self.undo_stack.push(snap);
+            self.redo_stack.clear();
+            self.count_group_active = true;
+        }
         for _ in 0..n {
             self.apply_action(act);
         }
+        self.count_group_active = false;
+    }
+
+    fn is_editing_action(act: Action) -> bool {
+        matches!(
+            act,
+            Action::DeleteLine | Action::DeleteCharUnder | Action::OpenAbove | Action::OpenBelow
+        )
     }
 
     fn parse_count_prefix(seq: &str) -> (Option<usize>, usize) {
@@ -574,18 +589,43 @@ impl Editor {
 
     fn apply_motion(&mut self, act: Action, count: usize, op: Option<(Action, usize)>) {
         let n = count.max(1);
+        let mut grouped_here = false;
+        if n > 1 {
+            if let Some((op_kind, _)) = op {
+                // Group counted operator+motion as single undo unit
+                if matches!(op_kind, Action::OperatorDelete | Action::OperatorChange)
+                    && !self.count_group_active
+                {
+                    let snap = EditorSnapshot::from_editor(self);
+                    self.undo_stack.push(snap);
+                    self.redo_stack.clear();
+                    self.count_group_active = true;
+                    grouped_here = true;
+                }
+            }
+        }
         match act {
             Action::MoveWordForward => {
                 let mut y = self.cy;
                 let mut target_c = self.cx;
-                for _ in 0..n {
+                for step in 0..n {
                     let cur_next = self.buf.next_word_start(target_c, y);
                     let next_line_word = if cur_next == target_c {
-                        if let Some((Action::OperatorDelete, _)) = op {
-                            if y + 1 < self.buf.rows.len() {
-                                Some((y + 1, 0))
+                        // No progress on this line: choose next line start or next word depending on remaining count and operator
+                        if y + 1 >= self.buf.rows.len() {
+                            None
+                        } else if let Some((opk, _)) = op {
+                            let rem = n - step;
+                            if matches!(opk, Action::OperatorDelete | Action::OperatorChange) {
+                                if rem <= 1 {
+                                    // dw at EOL: delete just the newline (preserve indentation)
+                                    Some((y + 1, 0))
+                                } else {
+                                    // more to go: move to next word start on next line
+                                    self.find_next_word_start_from(y + 1)
+                                }
                             } else {
-                                None
+                                self.find_next_word_start_from(y + 1)
                             }
                         } else {
                             self.find_next_word_start_from(y + 1)
@@ -654,6 +694,9 @@ impl Editor {
                     self.apply_action_count(act, n);
                 }
             }
+        }
+        if grouped_here {
+            self.count_group_active = false;
         }
     }
 
