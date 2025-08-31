@@ -159,7 +159,7 @@ impl Editor {
             Append => {
                 let len = self.buf.line_width(self.cy);
                 if self.cx < len {
-                    self.cx += 1;
+                    self.cx = self.buf.next_col(self.cx, self.cy);
                 }
                 self.mode = Mode::Insert;
             }

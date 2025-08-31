@@ -6,78 +6,6 @@ pub struct Buffer {
     pub rows: Vec<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn line_width_ascii_and_emoji() {
-        let mut b = Buffer::default();
-        b.rows = vec!["abc".to_string(), "😄x".to_string()];
-        assert_eq!(b.line_width(0), 3);
-        assert_eq!(b.line_width(1), 3);
-    }
-
-    #[test]
-    fn insert_char_and_navigation_grapheme() {
-        let mut b = Buffer::default();
-        b.rows = vec!["a".to_string()];
-        b.insert_char(1, 0, '😄');
-        assert_eq!(b.rows[0], "a😄");
-        assert_eq!(b.next_col(0, 0), 1);
-        assert_eq!(b.next_col(1, 0), 3);
-        assert_eq!(b.prev_col(3, 0), 1);
-    }
-
-    #[test]
-    fn delete_prev_removes_entire_grapheme() {
-        let mut b = Buffer::default();
-        b.rows = vec!["a😄b".to_string()];
-        let new_col = b.delete_prev(3, 0);
-        assert_eq!(new_col, 1);
-        assert_eq!(b.rows[0], "ab");
-    }
-
-    #[test]
-    fn col_to_byte_with_multibyte_letters() {
-        let mut b = Buffer::default();
-        b.rows = vec!["żółw".to_string()];
-        let mut last = 0;
-        for col in 0..=b.line_width(0) {
-            let bi = b.col_to_byte(0, col);
-            assert!(bi >= last);
-            last = bi;
-            assert!(bi <= b.rows[0].len());
-        }
-    }
-
-    #[test]
-    fn insert_newline_respects_grapheme_boundaries() {
-        let mut b = Buffer::default();
-        b.rows = vec!["foo😄bar".to_string()];
-        b.insert_newline(3, 0);
-        assert_eq!(b.rows.len(), 2);
-        assert_eq!(b.rows[0], "foo");
-        assert_eq!(b.rows[1], "😄bar");
-
-        b.insert_newline(1, 1);
-        assert_eq!(b.rows.len(), 3);
-        assert_eq!(b.rows[1], "");
-        assert_eq!(b.rows[2], "😄bar");
-    }
-
-    #[test]
-    fn merge_up_returns_display_width() {
-        let mut b = Buffer::default();
-        b.rows = vec!["żo".to_string(), "łw".to_string()];
-        let w = UnicodeWidthStr::width("żo");
-        let got = b.merge_up(1);
-        assert_eq!(got, w);
-        assert_eq!(b.rows.len(), 1);
-        assert_eq!(b.rows[0], "żołw");
-    }
-}
-
 impl Buffer {
     pub fn from_string(s: String) -> Self {
         let mut rows: Vec<String> = s
@@ -89,10 +17,6 @@ impl Buffer {
             rows.push(String::new());
         }
         Self { rows }
-    }
-
-    pub fn to_string(&self) -> String {
-        self.rows.join("\n")
     }
 
     pub fn line_width(&self, y: usize) -> usize {
@@ -182,10 +106,31 @@ impl Buffer {
         col.saturating_sub(1)
     }
 
-    pub fn delete_at(&mut self, x: usize, y: usize) {
+    pub fn delete_at(&mut self, col: usize, y: usize) {
+        use unicode_width::UnicodeWidthStr;
         if let Some(row) = self.rows.get_mut(y) {
-            if x < row.len() {
-                row.remove(x);
+            if row.is_empty() {
+                return;
+            }
+            let mut acc = 0usize;
+            let mut start_b = None::<usize>;
+            let mut end_b = None::<usize>;
+            let mut cur_b = 0usize;
+            for g in row.graphemes(true) {
+                let w = UnicodeWidthStr::width(g).max(1);
+                let next = acc + w;
+                if acc <= col && col < next {
+                    start_b = Some(cur_b);
+                    end_b = Some(cur_b + g.len());
+                    break;
+                }
+                acc = next;
+                cur_b += g.len();
+            }
+            if let (Some(s), Some(e)) = (start_b, end_b) {
+                if s < e && e <= row.len() {
+                    row.replace_range(s..e, "");
+                }
             }
         }
     }
@@ -238,5 +183,97 @@ impl Buffer {
             acc += w;
         }
         len
+    }
+}
+
+impl std::fmt::Display for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.rows.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_width_ascii_and_emoji() {
+        let b = Buffer {
+            rows: vec!["abc".to_string(), "😄x".to_string()],
+        };
+        assert_eq!(b.line_width(0), 3);
+        assert_eq!(b.line_width(1), 3);
+    }
+
+    #[test]
+    fn insert_char_and_navigation_grapheme() {
+        let mut b = Buffer { rows: vec!["a".to_string()] };
+        b.insert_char(1, 0, '😄');
+        assert_eq!(b.rows[0], "a😄");
+        assert_eq!(b.next_col(0, 0), 1);
+        assert_eq!(b.next_col(1, 0), 3);
+        assert_eq!(b.prev_col(3, 0), 1);
+    }
+
+    #[test]
+    fn delete_prev_removes_entire_grapheme() {
+        let mut b = Buffer {
+            rows: vec!["a😄b".to_string()],
+        };
+        let new_col = b.delete_prev(3, 0);
+        assert_eq!(new_col, 1);
+        assert_eq!(b.rows[0], "ab");
+    }
+
+    #[test]
+    fn col_to_byte_with_multibyte_letters() {
+        let b = Buffer {
+            rows: vec!["żółw".to_string()],
+        };
+        let mut last = 0;
+        for col in 0..=b.line_width(0) {
+            let bi = b.col_to_byte(0, col);
+            assert!(bi >= last);
+            last = bi;
+            assert!(bi <= b.rows[0].len());
+        }
+    }
+
+    #[test]
+    fn insert_newline_respects_grapheme_boundaries() {
+        let mut b = Buffer {
+            rows: vec!["foo😄bar".to_string()],
+        };
+        b.insert_newline(3, 0);
+        assert_eq!(b.rows.len(), 2);
+        assert_eq!(b.rows[0], "foo");
+        assert_eq!(b.rows[1], "😄bar");
+
+        b.insert_newline(1, 1);
+        assert_eq!(b.rows.len(), 3);
+        assert_eq!(b.rows[1], "");
+        assert_eq!(b.rows[2], "😄bar");
+    }
+
+    #[test]
+    fn merge_up_returns_display_width() {
+        let mut b = Buffer {
+            rows: vec!["żo".to_string(), "łw".to_string()],
+        };
+        let w = UnicodeWidthStr::width("żo");
+        let got = b.merge_up(1);
+        assert_eq!(got, w);
+        assert_eq!(b.rows.len(), 1);
+        assert_eq!(b.rows[0], "żołw");
+    }
+
+    #[test]
+    fn delete_at_removes_grapheme_under_column() {
+        let mut b = Buffer {
+            rows: vec!["a😄b".to_string()],
+        };
+        // cursor at column 1 is on the emoji (width 2)
+        b.delete_at(1, 0);
+        assert_eq!(b.rows[0], "ab");
     }
 }

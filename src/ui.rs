@@ -24,6 +24,22 @@ pub struct Ui {
 }
 
 impl Ui {
+    fn truncate_to_width(s: &str, max_w: usize) -> String {
+        if max_w == 0 {
+            return String::new();
+        }
+        let mut out = String::new();
+        let mut acc = 0usize;
+        for g in s.graphemes(true) {
+            let w = UnicodeWidthStr::width(g).max(1);
+            if acc + w > max_w {
+                break;
+            }
+            out.push_str(g);
+            acc += w;
+        }
+        out
+    }
     pub fn new() -> io::Result<Self> {
         let (cols, rows) = terminal::size()?;
         Ok(Self {
@@ -69,12 +85,13 @@ impl Ui {
             } else {
                 let line = &ed.buf.rows[file_row];
                 let mut col = 0usize;
-                let start_col = self.off_x as usize;
+                let start_col = self.off_x;
                 let end_col = start_col + self.screen_cols as usize;
                 for g in line.graphemes(true) {
                     let w = UnicodeWidthStr::width(g).max(1);
                     let next = col + w;
-                    if next <= start_col {
+                    // Skip any grapheme whose start is left of the viewport
+                    if col < start_col {
                         col = next;
                         continue;
                     }
@@ -114,26 +131,37 @@ impl Ui {
             crate::keymap::Mode::Normal => "NORMAL",
             crate::keymap::Mode::Insert => "INSERT",
         };
-        let left = format!(
+        let left_full = format!(
             " {}{} — {} lines [{}] ",
             fname,
             dirty,
             ed.buf.rows.len(),
             mode
         );
-        let right = format!(" {}/{} ", ed.cy + 1, ed.buf.rows.len());
-        let mut content = left;
+        let right_full = format!(" {}/{} ", ed.cy + 1, ed.buf.rows.len());
         let total = self.screen_cols as usize;
-        if content.len() > total {
-            content.truncate(total);
+        // Compute widths
+        let right_w = UnicodeWidthStr::width(right_full.as_str());
+        // Space available for left side including padding
+        let left = total.saturating_sub(right_w);
+        let left_str = if left > 0 {
+            // keep one space padding if possible
+            let left_target = left;
+            Self::truncate_to_width(&left_full, left_target)
         } else {
-            let rlen = right.len();
-            if total >= rlen + content.len() {
-                content.push_str(&" ".repeat(total - rlen - content.len()));
-                content.push_str(&right);
-            } else {
-                content.push_str(&" ".repeat(total - content.len()));
-            }
+            String::new()
+        };
+        // If left side took less space than allocated, pad with spaces
+        let left_w = UnicodeWidthStr::width(left_str.as_str());
+        let pad = left.saturating_sub(left_w);
+        let mut content = String::new();
+        content.push_str(&left_str);
+        if pad > 0 {
+            content.push_str(&" ".repeat(pad));
+        }
+        // Append right side if it fits
+        if right_w <= total.saturating_sub(left_w + pad) {
+            content.push_str(&right_full);
         }
         if self.prev_status != content {
             queue!(
@@ -158,10 +186,7 @@ impl Ui {
         if ed.status_time.elapsed() > Duration::from_millis(STATUS_TIMEOUT_MS) {
             return Ok(());
         }
-        let mut msg = ed.status.clone();
-        if msg.len() > self.screen_cols as usize {
-            msg.truncate(self.screen_cols as usize);
-        }
+        let msg = Self::truncate_to_width(&ed.status, self.screen_cols as usize);
         if self.prev_message != msg {
             queue!(
                 w,
@@ -218,10 +243,8 @@ impl Ui {
         let mut input = String::new();
         loop {
             self.refresh(&mut w, ed)?;
-            let mut shown = format!("{}{}", prompt, input);
-            if shown.len() > self.screen_cols as usize {
-                shown.truncate(self.screen_cols as usize);
-            }
+            let shown =
+                Self::truncate_to_width(&format!("{}{}", prompt, input), self.screen_cols as usize);
             queue!(
                 w,
                 MoveTo(0, self.screen_rows),
@@ -267,10 +290,8 @@ impl Ui {
         let mut input = String::new();
         loop {
             self.refresh(&mut w, ed)?;
-            let mut display = format!(":{}", input);
-            if display.len() > self.screen_cols as usize {
-                display.truncate(self.screen_cols as usize);
-            }
+            let display =
+                Self::truncate_to_width(&format!(":{}", input), self.screen_cols as usize);
             queue!(
                 w,
                 MoveTo(0, self.screen_rows),
