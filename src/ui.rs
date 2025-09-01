@@ -80,10 +80,10 @@ impl Ui {
         for row in 0..self.screen_rows as usize {
             let file_row = self.off_y + row;
             let mut out = String::new();
-            if file_row >= ed.buf.rows.len() {
+            if file_row >= ed.buf.line_count() {
                 out.push('~');
             } else {
-                let line = &ed.buf.rows[file_row];
+                let line = ed.buf.line_string(file_row);
                 let mut col = 0usize;
                 let start_col = self.off_x;
                 let end_col = start_col + self.screen_cols as usize;
@@ -135,10 +135,10 @@ impl Ui {
             " {}{} — {} lines [{}] ",
             fname,
             dirty,
-            ed.buf.rows.len(),
+            ed.buf.line_count(),
             mode
         );
-        let right_full = format!(" {}/{} ", ed.cy + 1, ed.buf.rows.len());
+        let right_full = format!(" {}/{} ", ed.cy + 1, ed.buf.line_count());
         let total = self.screen_cols as usize;
         // Compute widths
         let right_w = UnicodeWidthStr::width(right_full.as_str());

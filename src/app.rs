@@ -145,7 +145,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 KeyCode::PageDown => {
                                     ed.cy = (ed.cy + ui.screen_rows as usize)
-                                        .min(ed.buf.rows.len().saturating_sub(1));
+                                        .min(ed.buf.line_count().saturating_sub(1));
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) => {
@@ -194,7 +194,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 KeyCode::PageDown => {
                                     ed.cy = (ed.cy + ui.screen_rows as usize)
-                                        .min(ed.buf.rows.len().saturating_sub(1));
+                                        .min(ed.buf.line_count().saturating_sub(1));
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {

@@ -1,155 +1,193 @@
+use ropey::Rope;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-#[derive(Default)]
+#[derive(Clone)]
 pub struct Buffer {
-    pub rows: Vec<String>,
+    rope: Rope,
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self {
+            rope: Rope::from_str(""),
+        }
+    }
 }
 
 impl Buffer {
     pub fn from_string(s: String) -> Self {
-        let mut rows: Vec<String> = s
-            .replace('\r', "")
-            .split('\n')
-            .map(|l| l.to_string())
-            .collect();
-        if rows.is_empty() {
-            rows.push(String::new());
+        Self {
+            rope: Rope::from_str(&s.replace('\r', "")),
         }
-        Self { rows }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_lines(lines: Vec<String>) -> Self {
+        Self::from_string(lines.join("\n"))
+    }
+
+    #[allow(dead_code)]
+    pub fn to_lines(&self) -> Vec<String> {
+        self.to_string()
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.rope.len_lines()
+    }
+
+    pub fn line_string(&self, y: usize) -> String {
+        if y >= self.line_count() {
+            return String::new();
+        }
+        let s = self.rope.line(y).to_string();
+        // Be robust to whether rope includes trailing newline
+        if let Some(stripped) = s.strip_suffix('\n') {
+            stripped.to_string()
+        } else {
+            s
+        }
     }
 
     pub fn line_width(&self, y: usize) -> usize {
-        self.rows
-            .get(y)
-            .map(|s| UnicodeWidthStr::width(s.as_str()))
-            .unwrap_or(0)
+        let s = self.line_string(y);
+        UnicodeWidthStr::width(s.as_str())
     }
 
-    pub fn col_to_byte(&self, y: usize, col: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return 0;
-        };
+    fn line_start_char(&self, y: usize) -> usize {
+        self.rope.line_to_char(y)
+    }
+
+    fn col_to_line_byte(&self, y: usize, col: usize) -> usize {
+        let row = self.line_string(y);
         let mut acc = 0usize;
         let mut byte_idx = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g);
-            if acc >= col {
-                break;
+            let w = UnicodeWidthStr::width(g).max(1);
+            if acc + w > col {
+                return byte_idx;
             }
+            acc += w;
             byte_idx += g.len();
-            acc += w.max(1);
         }
-        if acc > col {
-            let mut acc2 = 0usize;
-            let mut b2 = 0usize;
-            for g in row.graphemes(true) {
-                let w = UnicodeWidthStr::width(g).max(1);
-                if acc2 + w > col {
-                    break;
-                }
-                b2 += g.len();
-                acc2 += w;
-            }
-            return b2;
-        }
-        byte_idx
+        byte_idx.min(row.len())
+    }
+
+    #[allow(dead_code)]
+    pub fn col_to_byte(&self, y: usize, col: usize) -> usize {
+        self.col_to_line_byte(y, col)
+    }
+
+    fn col_to_char_index(&self, y: usize, col: usize) -> usize {
+        let line = self.line_string(y);
+        let byte = self.col_to_line_byte(y, col).min(line.len());
+        let char_in_line = line[..byte].chars().count();
+        self.line_start_char(y) + char_in_line
     }
 
     pub fn insert_char(&mut self, col: usize, y: usize, ch: char) {
-        let bi = {
-            let len_row = self.rows.get(y).map(|r| r.len()).unwrap_or(0);
-            let bi0 = self.col_to_byte(y, col);
-            bi0.min(len_row)
-        };
-        if let Some(row) = self.rows.get_mut(y) {
-            if bi <= row.len() {
-                row.insert(bi, ch);
-            }
-        }
+        let idx = self.col_to_char_index(y, col);
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        self.rope.insert(idx, s);
     }
 
     pub fn insert_newline(&mut self, col: usize, y: usize) {
-        if y >= self.rows.len() {
-            self.rows.push(String::new());
+        let idx = self.col_to_char_index(y, col);
+        self.rope.insert(idx, "\n");
+    }
+
+    pub fn delete_line(&mut self, y: usize) {
+        if y >= self.line_count() {
             return;
         }
-        let split_at = self.col_to_byte(y, col);
-        let rest = self.rows[y].split_off(split_at);
-        self.rows.insert(y + 1, rest);
+        let start = self.line_start_char(y);
+        let end = if y + 1 < self.line_count() {
+            self.line_start_char(y + 1)
+        } else {
+            self.rope.len_chars()
+        };
+        self.rope.remove(start..end);
     }
 
     pub fn delete_prev(&mut self, col: usize, y: usize) -> usize {
-        if let Some(row) = self.rows.get_mut(y) {
-            if row.is_empty() || col == 0 {
-                return 0;
+        let row = self.line_string(y);
+        if row.is_empty() || col == 0 {
+            return 0;
+        }
+        let mut acc = 0usize;
+        let mut prev_acc = 0usize;
+        let mut prev_b = 0usize;
+        let mut cur_b = 0usize;
+        for g in row.graphemes(true) {
+            let w = UnicodeWidthStr::width(g).max(1);
+            if acc >= col {
+                break;
             }
-            let mut acc = 0usize;
-            let mut prev_acc = 0usize;
-            let mut prev_b = 0usize;
-            let mut cur_b = 0usize;
-            for g in row.graphemes(true) {
-                let w = UnicodeWidthStr::width(g).max(1);
-                if acc >= col {
-                    break;
-                }
-                prev_acc = acc;
-                prev_b = cur_b;
-                cur_b += g.len();
-                acc += w;
-            }
-            if prev_b < cur_b && cur_b <= row.len() {
-                row.replace_range(prev_b..cur_b, "");
-                return prev_acc;
-            }
+            prev_acc = acc;
+            prev_b = cur_b;
+            cur_b += g.len();
+            acc += w;
+        }
+        if prev_b < cur_b && cur_b <= row.len() {
+            // Convert byte range within line to char indices in rope
+            let start_chars = row[..prev_b].chars().count();
+            let end_chars = row[..cur_b].chars().count();
+            let start = self.line_start_char(y) + start_chars;
+            let end = self.line_start_char(y) + end_chars;
+            self.rope.remove(start..end);
+            return prev_acc;
         }
         col.saturating_sub(1)
     }
 
     pub fn delete_at(&mut self, col: usize, y: usize) {
-        use unicode_width::UnicodeWidthStr;
-        if let Some(row) = self.rows.get_mut(y) {
-            if row.is_empty() {
-                return;
+        let row = self.line_string(y);
+        if row.is_empty() {
+            return;
+        }
+        let mut acc = 0usize;
+        let mut start_b = None::<usize>;
+        let mut end_b = None::<usize>;
+        let mut cur_b = 0usize;
+        for g in row.graphemes(true) {
+            let w = UnicodeWidthStr::width(g).max(1);
+            let next = acc + w;
+            if acc <= col && col < next {
+                start_b = Some(cur_b);
+                end_b = Some(cur_b + g.len());
+                break;
             }
-            let mut acc = 0usize;
-            let mut start_b = None::<usize>;
-            let mut end_b = None::<usize>;
-            let mut cur_b = 0usize;
-            for g in row.graphemes(true) {
-                let w = UnicodeWidthStr::width(g).max(1);
-                let next = acc + w;
-                if acc <= col && col < next {
-                    start_b = Some(cur_b);
-                    end_b = Some(cur_b + g.len());
-                    break;
-                }
-                acc = next;
-                cur_b += g.len();
-            }
-            if let (Some(s), Some(e)) = (start_b, end_b) {
-                if s < e && e <= row.len() {
-                    row.replace_range(s..e, "");
-                }
-            }
+            acc = next;
+            cur_b += g.len();
+        }
+        if let (Some(s), Some(e)) = (start_b, end_b) {
+            let start_chars = row[..s].chars().count();
+            let end_chars = row[..e].chars().count();
+            let start = self.line_start_char(y) + start_chars;
+            let end = self.line_start_char(y) + end_chars;
+            self.rope.remove(start..end);
         }
     }
 
     pub fn merge_up(&mut self, y: usize) -> usize {
-        if y > 0 && y < self.rows.len() {
-            let cur = self.rows.remove(y);
-            let new_x = UnicodeWidthStr::width(self.rows[y - 1].as_str());
-            self.rows[y - 1].push_str(&cur);
-            new_x
-        } else {
-            0
+        if y == 0 || y >= self.line_count() {
+            return 0;
         }
+        let new_x = self.line_width(y - 1);
+        let start = self.line_start_char(y);
+        if start > 0 {
+            // remove the newline just before this line
+            self.rope.remove((start - 1)..start);
+        }
+        new_x
     }
 
     pub fn prev_col(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return 0;
-        };
+        let row = self.line_string(y);
         if col == 0 {
             return 0;
         }

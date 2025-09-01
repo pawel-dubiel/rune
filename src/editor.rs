@@ -8,16 +8,17 @@ use crate::keymap::{default_keymap, load_config, Action, Mode};
 
 #[derive(Clone)]
 struct EditorSnapshot {
-    rows: Vec<String>,
+    text: String,
     cx: usize,
     cy: usize,
+    #[allow(dead_code)]
     mode: Mode,
 }
 
 impl EditorSnapshot {
     fn from_editor(ed: &Editor) -> Self {
         Self {
-            rows: ed.buf.rows.clone(),
+            text: ed.buf.to_string(),
             cx: ed.cx,
             cy: ed.cy,
             mode: ed.mode,
