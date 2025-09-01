@@ -78,12 +78,14 @@ impl Editor {
 
     pub fn undo(&mut self) -> bool {
         if let Some(prev) = self.undo_stack.pop() {
+            let cur_mode = self.mode;
             let cur = EditorSnapshot::from_editor(self);
             self.redo_stack.push(cur);
-            self.buf.rows = prev.rows;
+            self.buf = Buffer::from_string(prev.text);
             self.cx = prev.cx;
             self.cy = prev.cy;
-            self.mode = prev.mode;
+            // Do not change current mode on undo (match Vim: stay in Normal)
+            self.mode = cur_mode;
             self.clamp_cursor();
             self.undo_group_active = false;
             return true;
@@ -93,12 +95,14 @@ impl Editor {
 
     pub fn redo(&mut self) -> bool {
         if let Some(next) = self.redo_stack.pop() {
+            let cur_mode = self.mode;
             let cur = EditorSnapshot::from_editor(self);
             self.undo_stack.push(cur);
-            self.buf.rows = next.rows;
+            self.buf = Buffer::from_string(next.text);
             self.cx = next.cx;
             self.cy = next.cy;
-            self.mode = next.mode;
+            // Do not change current mode on redo
+            self.mode = cur_mode;
             self.clamp_cursor();
             self.undo_group_active = false;
             return true;
@@ -165,7 +169,7 @@ impl Editor {
     }
 
     pub fn clamp_cursor(&mut self) {
-        let max_y = self.buf.rows.len().saturating_sub(1);
+        let max_y = self.buf.line_count().saturating_sub(1);
         self.cy = self.cy.min(max_y);
         let line_w = self.buf.line_width(self.cy);
         self.cx = self.cx.min(line_w);
@@ -216,7 +220,7 @@ impl Editor {
                 let len = self.buf.line_width(self.cy);
                 if self.cx < len {
                     self.cx = self.buf.next_col(self.cx, self.cy);
-                } else if self.cy + 1 < self.buf.rows.len() {
+                } else if self.cy + 1 < self.buf.line_count() {
                     self.cy += 1;
                     self.cx = 0;
                 }
@@ -227,7 +231,7 @@ impl Editor {
                 }
             }
             MoveDown => {
-                if self.cy + 1 < self.buf.rows.len() {
+                if self.cy + 1 < self.buf.line_count() {
                     self.cy += 1;
                 }
             }
@@ -244,8 +248,8 @@ impl Editor {
             }
             GotoBottom => {
                 // Default G behavior: go to last line
-                if !self.buf.rows.is_empty() {
-                    self.cy = self.buf.rows.len() - 1;
+                if self.buf.line_count() > 0 {
+                    self.cy = self.buf.line_count() - 1;
                     self.cx = self.buf.line_width(self.cy);
                 }
             }
@@ -282,18 +286,12 @@ impl Editor {
             }
             DeleteLine => {
                 self.on_edit_start();
-                if !self.buf.rows.is_empty() {
-                    self.buf.rows.remove(self.cy);
-                    if self.buf.rows.is_empty() {
-                        self.buf.rows.push(String::new());
-                        self.cy = 0;
-                        self.cx = 0;
-                    } else if self.cy >= self.buf.rows.len() {
-                        self.cy = self.buf.rows.len() - 1;
-                        self.cx = 0;
-                    } else {
-                        self.cx = 0;
+                if self.buf.line_count() > 0 {
+                    self.buf.delete_line(self.cy);
+                    if self.cy >= self.buf.line_count() {
+                        self.cy = self.buf.line_count().saturating_sub(1);
                     }
+                    self.cx = 0;
                     self.dirty = true;
                 }
             }
@@ -416,14 +414,12 @@ impl Editor {
                                     self.apply_action_count(Action::DeleteLine, effective);
                                 }
                                 (Action::OperatorChange, Action::OperatorChange) => {
-                                    // Change whole line(s)
+                                    // Change whole line(s): clear content but keep line
                                     for _ in 0..effective.max(1) {
-                                        if let Some(row) = self.buf.rows.get_mut(self.cy) {
-                                            row.clear();
-                                        }
+                                        self.buf.clear_line(self.cy);
                                         self.cx = 0;
                                         self.dirty = true;
-                                        if self.cy + 1 < self.buf.rows.len() {
+                                        if self.cy + 1 < self.buf.line_count() {
                                             self.cy += 1;
                                         }
                                     }
@@ -432,8 +428,12 @@ impl Editor {
                                 }
                                 (Action::OperatorYank, Action::OperatorYank) => {
                                     // Yank whole line(s)
-                                    let end = (self.cy + effective).min(self.buf.rows.len());
-                                    self.clipboard = self.buf.rows[self.cy..end].join("\n");
+                                    let end = (self.cy + effective).min(self.buf.line_count());
+                                    let mut parts = Vec::new();
+                                    for y in self.cy..end {
+                                        parts.push(self.buf.line_string(y));
+                                    }
+                                    self.clipboard = parts.join("\n");
                                 }
                                 (opk, Action::MoveWordForward)
                                 | (opk, Action::MoveWordBackward)
@@ -576,12 +576,12 @@ impl Editor {
     }
 
     fn goto_line(&mut self, n1: usize) {
-        if self.buf.rows.is_empty() {
+        if self.buf.line_count() == 0 {
             self.cy = 0;
             self.cx = 0;
             return;
         }
-        let max = self.buf.rows.len();
+        let max = self.buf.line_count();
         let target = n1.min(max).saturating_sub(1);
         self.cy = target;
         self.cx = 0;
@@ -613,7 +613,7 @@ impl Editor {
                     let cur_next = self.buf.next_word_start(target_c, y);
                     let next_line_word = if cur_next == target_c {
                         // No progress on this line: choose next line start or next word depending on remaining count and operator
-                        if y + 1 >= self.buf.rows.len() {
+                        if y + 1 >= self.buf.line_count() {
                             None
                         } else if let Some((opk, _)) = op {
                             let rem = n - step;
@@ -749,79 +749,27 @@ impl Editor {
     fn extract_range(&self, start: (usize, usize), end: (usize, usize), inclusive: bool) -> String {
         let (sy, sx) = start;
         let (ey, ex0) = end;
-        if sy == ey {
-            let start_b = self.buf.col_to_byte(sy, sx);
-            let mut end_b = self.buf.col_to_byte(ey, ex0);
-            if inclusive {
-                let after = self.buf.next_col(ex0, ey);
-                end_b = self.buf.col_to_byte(ey, after);
-            }
-            let row = &self.buf.rows[sy];
-            return row.get(start_b..end_b).unwrap_or("").to_string();
-        }
-        let mut out = String::new();
-        // first line fragment
-        let start_b = self.buf.col_to_byte(sy, sx);
-        out.push_str(&self.buf.rows[sy][start_b..]);
-        out.push('\n');
-        // intermediate lines
-        for y in (sy + 1)..ey {
-            out.push_str(&self.buf.rows[y]);
-            out.push('\n');
-        }
-        // end line fragment
-        let mut end_b = self.buf.col_to_byte(ey, ex0);
-        if inclusive {
-            let after = self.buf.next_col(ex0, ey);
-            end_b = self.buf.col_to_byte(ey, after);
-        }
-        out.push_str(&self.buf.rows[ey][..end_b]);
-        out
+        let start_char = self.buf.char_index_at_col(sy, sx);
+        let end_col = if inclusive {
+            self.buf.next_col(ex0, ey)
+        } else {
+            ex0
+        };
+        let end_char = self.buf.char_index_at_col(ey, end_col);
+        self.buf.string_from_char_range(start_char, end_char)
     }
 
     fn delete_range(&mut self, start: (usize, usize), end: (usize, usize), inclusive: bool) {
         let (sy, sx) = start;
         let (ey, ex0) = end;
-        if sy == ey {
-            let start_b = self.buf.col_to_byte(sy, sx);
-            let mut end_b = self.buf.col_to_byte(ey, ex0);
-            if inclusive {
-                let after = self.buf.next_col(ex0, ey);
-                end_b = self.buf.col_to_byte(ey, after);
-            }
-            if let Some(row) = self.buf.rows.get_mut(sy) {
-                if start_b < end_b && end_b <= row.len() {
-                    row.replace_range(start_b..end_b, "");
-                }
-            }
-            return;
-        }
-        // Multi-line delete: remove tail of start line, whole middle lines, head of end line, then merge
-        let start_b = self.buf.col_to_byte(sy, sx);
-        let mut tail = String::new();
-        // Capture end tail first
-        let mut end_b = self.buf.col_to_byte(ey, ex0);
-        if inclusive {
-            let after = self.buf.next_col(ex0, ey);
-            end_b = self.buf.col_to_byte(ey, after);
-        }
-        if end_b <= self.buf.rows[ey].len() {
-            tail.push_str(&self.buf.rows[ey][end_b..]);
-        }
-        // Truncate start line at start_b
-        if let Some(row) = self.buf.rows.get_mut(sy) {
-            if start_b <= row.len() {
-                row.truncate(start_b);
-            }
-        }
-        // Remove intermediate lines including ey
-        for _ in sy + 1..=ey {
-            self.buf.rows.remove(sy + 1);
-        }
-        // Append tail from former end line
-        if let Some(row) = self.buf.rows.get_mut(sy) {
-            row.push_str(&tail);
-        }
+        let start_char = self.buf.char_index_at_col(sy, sx);
+        let end_col = if inclusive {
+            self.buf.next_col(ex0, ey)
+        } else {
+            ex0
+        };
+        let end_char = self.buf.char_index_at_col(ey, end_col);
+        self.buf.remove_char_range(start_char, end_char);
     }
 
     #[cfg(test)]
@@ -831,8 +779,8 @@ impl Editor {
 
     fn find_next_word_start_from(&self, mut y: usize) -> Option<(usize, usize)> {
         use unicode_segmentation::UnicodeSegmentation;
-        while y < self.buf.rows.len() {
-            let row = &self.buf.rows[y];
+        while y < self.buf.line_count() {
+            let row = self.buf.line_string(y);
             for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
                 if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
                     // convert i (byte) to col
@@ -857,7 +805,8 @@ impl Editor {
         use unicode_segmentation::UnicodeSegmentation;
         let mut yy = y;
         loop {
-            if let Some(row) = self.buf.rows.get(yy) {
+            if yy < self.buf.line_count() {
+                let row = self.buf.line_string(yy);
                 let mut last: Option<usize> = None;
                 for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
                     if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
@@ -888,8 +837,8 @@ impl Editor {
 
     fn find_next_word_end_from(&self, mut y: usize) -> Option<(usize, usize)> {
         use unicode_segmentation::UnicodeSegmentation;
-        while y < self.buf.rows.len() {
-            let row = &self.buf.rows[y];
+        while y < self.buf.line_count() {
+            let row = self.buf.line_string(y);
             for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
                 if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
                     let end_b = i + seg.len();
@@ -982,8 +931,8 @@ impl Editor {
     pub fn execute_ex_command(&mut self, cmd: &str) -> bool {
         let s = cmd.trim();
         if s == "$" {
-            if !self.buf.rows.is_empty() {
-                self.cy = self.buf.rows.len() - 1;
+            if self.buf.line_count() > 0 {
+                self.cy = self.buf.line_count() - 1;
                 self.cx = 0;
             }
             return true;
@@ -993,7 +942,7 @@ impl Editor {
             if let Ok(n) = s[1..].parse::<isize>() {
                 let base = self.cy as isize;
                 let target = (base + sign * n)
-                    .clamp(0, (self.buf.rows.len().saturating_sub(1)) as isize)
+                    .clamp(0, (self.buf.line_count().saturating_sub(1)) as isize)
                     as usize;
                 self.cy = target;
                 self.cx = 0;
@@ -1006,8 +955,8 @@ impl Editor {
                 if n == 0 {
                     n = 1;
                 }
-                if !self.buf.rows.is_empty() {
-                    let max = self.buf.rows.len();
+                if self.buf.line_count() > 0 {
+                    let max = self.buf.line_count();
                     let target = n.min(max).saturating_sub(1);
                     self.cy = target;
                     self.cx = 0;
