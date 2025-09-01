@@ -205,9 +205,7 @@ impl Buffer {
     }
 
     pub fn next_col(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return col;
-        };
+        let row = self.line_string(y);
         let len = UnicodeWidthStr::width(row.as_str());
         if col >= len {
             return len;
@@ -224,17 +222,14 @@ impl Buffer {
     }
 
     pub fn next_word_start(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return col;
-        };
-        let bi = self.col_to_byte(y, col);
+        let row = self.line_string(y);
+        let bi = self.col_to_line_byte(y, col);
         let mut found = None::<usize>;
         let mut cur_end: Option<usize> = None;
         for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
             let end = i + seg.len();
             let is_word = seg.chars().any(|c| c.is_alphanumeric() || c == '_');
             if cur_end.is_none() && i <= bi && bi < end {
-                // We are in the current segment
                 cur_end = Some(end);
                 continue;
             }
@@ -251,7 +246,6 @@ impl Buffer {
             }
         }
         let target_b = found.unwrap_or(row.len());
-        // Recompute from start for simplicity
         let mut acc2 = 0usize;
         let mut bpos = 0usize;
         for g in row.graphemes(true) {
@@ -265,10 +259,8 @@ impl Buffer {
     }
 
     pub fn prev_word_start(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return col;
-        };
-        let bi = self.col_to_byte(y, col);
+        let row = self.line_string(y);
+        let bi = self.col_to_line_byte(y, col);
         let mut prev = None::<usize>;
         for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
             if i >= bi {
@@ -292,18 +284,14 @@ impl Buffer {
     }
 
     pub fn end_of_word(&self, col: usize, y: usize) -> usize {
-        let Some(row) = self.rows.get(y) else {
-            return col;
-        };
-        let bi = self.col_to_byte(y, col);
-        let mut _cur_word_start = None::<usize>;
+        let row = self.line_string(y);
+        let bi = self.col_to_line_byte(y, col);
         let mut cur_word_end = None::<usize>;
         let mut after = None::<usize>;
         for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
             let seg_is_word = seg.chars().any(|c| c.is_alphanumeric() || c == '_');
             let end = i + seg.len();
             if seg_is_word && i <= bi && bi < end {
-                _cur_word_start = Some(i);
                 cur_word_end = Some(end);
                 break;
             }
@@ -313,7 +301,6 @@ impl Buffer {
             }
         }
         let target_b = cur_word_end.or(after).unwrap_or(row.len());
-        // Convert byte to col, but return the next column after end to be inclusive-friendly
         let mut acc2 = 0usize;
         let mut bpos = 0usize;
         for g in row.graphemes(true) {
@@ -327,11 +314,37 @@ impl Buffer {
         }
         acc2
     }
+
+    // Utilities for editor multi-line ops
+    pub fn char_index_at_col(&self, y: usize, col: usize) -> usize {
+        self.col_to_char_index(y, col)
+    }
+
+    pub fn remove_char_range(&mut self, start_char: usize, end_char: usize) {
+        if start_char < end_char && end_char <= self.rope.len_chars() {
+            self.rope.remove(start_char..end_char);
+        }
+    }
+
+    pub fn string_from_char_range(&self, start_char: usize, end_char: usize) -> String {
+        self.rope.slice(start_char..end_char).to_string()
+    }
+
+    pub fn clear_line(&mut self, y: usize) {
+        if y >= self.line_count() {
+            return;
+        }
+        let start = self.line_start_char(y);
+        let chars_in_line = self.line_string(y).chars().count();
+        if chars_in_line > 0 {
+            self.rope.remove(start..(start + chars_in_line));
+        }
+    }
 }
 
 impl std::fmt::Display for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.rows.join("\n"))
+        write!(f, "{}", self.rope)
     }
 }
 
@@ -341,20 +354,16 @@ mod tests {
 
     #[test]
     fn line_width_ascii_and_emoji() {
-        let b = Buffer {
-            rows: vec!["abc".to_string(), "😄x".to_string()],
-        };
+        let b = Buffer::from_lines(vec!["abc".to_string(), "😄x".to_string()]);
         assert_eq!(b.line_width(0), 3);
         assert_eq!(b.line_width(1), 3);
     }
 
     #[test]
     fn insert_char_and_navigation_grapheme() {
-        let mut b = Buffer {
-            rows: vec!["a".to_string()],
-        };
+        let mut b = Buffer::from_lines(vec!["a".to_string()]);
         b.insert_char(1, 0, '😄');
-        assert_eq!(b.rows[0], "a😄");
+        assert_eq!(b.line_string(0), "a😄");
         assert_eq!(b.next_col(0, 0), 1);
         assert_eq!(b.next_col(1, 0), 3);
         assert_eq!(b.prev_col(3, 0), 1);
@@ -362,63 +371,53 @@ mod tests {
 
     #[test]
     fn delete_prev_removes_entire_grapheme() {
-        let mut b = Buffer {
-            rows: vec!["a😄b".to_string()],
-        };
+        let mut b = Buffer::from_lines(vec!["a😄b".to_string()]);
         let new_col = b.delete_prev(3, 0);
         assert_eq!(new_col, 1);
-        assert_eq!(b.rows[0], "ab");
+        assert_eq!(b.line_string(0), "ab");
     }
 
     #[test]
     fn col_to_byte_with_multibyte_letters() {
-        let b = Buffer {
-            rows: vec!["żółw".to_string()],
-        };
+        let b = Buffer::from_lines(vec!["żółw".to_string()]);
         let mut last = 0;
         for col in 0..=b.line_width(0) {
             let bi = b.col_to_byte(0, col);
             assert!(bi >= last);
             last = bi;
-            assert!(bi <= b.rows[0].len());
+            assert!(bi <= b.line_string(0).len());
         }
     }
 
     #[test]
     fn insert_newline_respects_grapheme_boundaries() {
-        let mut b = Buffer {
-            rows: vec!["foo😄bar".to_string()],
-        };
+        let mut b = Buffer::from_lines(vec!["foo😄bar".to_string()]);
         b.insert_newline(3, 0);
-        assert_eq!(b.rows.len(), 2);
-        assert_eq!(b.rows[0], "foo");
-        assert_eq!(b.rows[1], "😄bar");
+        assert_eq!(b.line_count(), 2);
+        assert_eq!(b.line_string(0), "foo");
+        assert_eq!(b.line_string(1), "😄bar");
 
         b.insert_newline(1, 1);
-        assert_eq!(b.rows.len(), 3);
-        assert_eq!(b.rows[1], "");
-        assert_eq!(b.rows[2], "😄bar");
+        assert_eq!(b.line_count(), 3);
+        assert_eq!(b.line_string(1), "");
+        assert_eq!(b.line_string(2), "😄bar");
     }
 
     #[test]
     fn merge_up_returns_display_width() {
-        let mut b = Buffer {
-            rows: vec!["żo".to_string(), "łw".to_string()],
-        };
+        let mut b = Buffer::from_lines(vec!["żo".to_string(), "łw".to_string()]);
         let w = UnicodeWidthStr::width("żo");
         let got = b.merge_up(1);
         assert_eq!(got, w);
-        assert_eq!(b.rows.len(), 1);
-        assert_eq!(b.rows[0], "żołw");
+        assert_eq!(b.line_count(), 1);
+        assert_eq!(b.line_string(0), "żołw");
     }
 
     #[test]
     fn delete_at_removes_grapheme_under_column() {
-        let mut b = Buffer {
-            rows: vec!["a😄b".to_string()],
-        };
+        let mut b = Buffer::from_lines(vec!["a😄b".to_string()]);
         // cursor at column 1 is on the emoji (width 2)
         b.delete_at(1, 0);
-        assert_eq!(b.rows[0], "ab");
+        assert_eq!(b.line_string(0), "ab");
     }
 }

@@ -977,18 +977,18 @@ mod tests {
     fn normal_mode_3dd_deletes_three_lines() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec![
+        ed.buf = Buffer::from_lines(vec![
             "l1".to_string(),
             "l2".to_string(),
             "l3".to_string(),
             "l4".to_string(),
             "l5".to_string(),
-        ];
+        ]);
         ed.cy = 1; // start at second line
         for ch in "3dd".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows, vec!["l1".to_string(), "l5".to_string()]);
+        assert_eq!(ed.buf.to_lines(), vec!["l1".to_string(), "l5".to_string()]);
         assert_eq!(ed.cy, 1); // cursor on what became former l5
     }
 
@@ -996,7 +996,7 @@ mod tests {
     fn normal_mode_10j_moves_down_multiple_lines() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (0..15).map(|i| format!("{}", i)).collect();
+        ed.buf = Buffer::from_lines((0..15).map(|i| format!("{}", i)).collect());
         ed.cy = 0;
         for ch in "10j".chars() {
             let _ = ed.process_normal_char(ch);
@@ -1012,7 +1012,7 @@ mod tests {
     fn normal_mode_count_gg_and_g_go_to_line() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (1..=20).map(|i| format!("{}", i)).collect();
+        ed.buf = Buffer::from_lines((1..=20).map(|i| format!("{}", i)).collect());
         ed.cy = 10;
         for ch in "5gg".chars() {
             let _ = ed.process_normal_char(ch);
@@ -1036,7 +1036,7 @@ mod tests {
     fn ex_command_number_moves_to_line() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (1..=15).map(|i| format!("{}", i)).collect();
+        ed.buf = Buffer::from_lines((1..=15).map(|i| format!("{}", i)).collect());
         ed.cy = 5;
         // Simulate entering ':' then numeric command
         let res = ed.process_normal_char(':');
@@ -1053,7 +1053,7 @@ mod tests {
     fn pending_timeout_clears_incomplete_sequence() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (0..=5).map(|i| format!("{}", i)).collect();
+        ed.buf = Buffer::from_lines((0..=5).map(|i| format!("{}", i)).collect());
         let _ = ed.process_normal_char('g'); // start a prefix
                                              // Simulate timeout without sleeping
         let _ = ed.process_pending_timeout();
@@ -1068,23 +1068,23 @@ mod tests {
     fn operator_dw_and_d_dollar() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["hello world".into(), "second".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into(), "second".into()]);
         ed.cy = 0;
         ed.cx = 0;
         // dw from start should remove "hello "
         for ch in "dw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
         // reset
-        ed.buf.rows[0] = "hello world".into();
+        ed.buf = Buffer::from_lines(vec!["hello world".into(), "second".into()]);
         ed.cx = 6; // before 'w'
         for ch in "d$".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "hello ");
+        assert_eq!(ed.buf.line_string(0), "hello ");
         // counts: 3w moves three words (here only two words so clamp)
-        ed.buf.rows = vec!["one two three four".into()];
+        ed.buf = Buffer::from_lines(vec!["one two three four".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "3w".chars() {
@@ -1092,62 +1092,65 @@ mod tests {
         }
         assert!(ed.cx > 0);
         // 2dw deletes two words from current position
-        let start_text = ed.buf.rows[0].clone();
+        let start_text = ed.buf.line_string(0);
         for ch in "2dw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert!(ed.buf.rows[0].len() < start_text.len());
+        assert!(ed.buf.line_string(0).len() < start_text.len());
     }
 
     #[test]
     fn undo_redo_insert_and_delete() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Insert;
-        ed.buf.rows = vec![String::new()];
+        ed.buf = Buffer::from_lines(vec![String::new()]);
         ed.insert_char('a');
         ed.insert_char('b');
         ed.insert_char('c');
-        assert_eq!(ed.buf.rows[0], "abc");
+        assert_eq!(ed.buf.line_string(0), "abc");
         // Undo should revert the entire insert group while in insert mode
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "");
+        assert_eq!(ed.buf.line_string(0), "");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "abc");
+        assert_eq!(ed.buf.line_string(0), "abc");
 
         ed.mode = Mode::Normal;
         // dd with undo/redo
         for ch in "dd".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "");
+        assert_eq!(ed.buf.line_string(0), "");
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows.len(), 1);
+        assert_eq!(ed.buf.line_count(), 1);
         // buffer restored before dd
-        assert_eq!(ed.buf.rows[0], "abc");
+        assert_eq!(ed.buf.line_string(0), "abc");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "");
+        assert_eq!(ed.buf.line_string(0), "");
     }
 
     #[test]
     fn undo_redo_for_3dd() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec![
+        ed.buf = Buffer::from_lines(vec![
             "l1".into(),
             "l2".into(),
             "l3".into(),
             "l4".into(),
             "l5".into(),
-        ];
+        ]);
         ed.cy = 1;
         for ch in "3dd".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows, vec![String::from("l1"), String::from("l5")]);
+        assert_eq!(
+            ed.buf.to_lines(),
+            vec![String::from("l1"), String::from("l5")]
+        );
         // Single undo restores all 3 lines; redo removes them again
         assert!(ed.undo());
         assert_eq!(
-            ed.buf.rows,
+            ed.buf.to_lines(),
             vec![
                 String::from("l1"),
                 String::from("l2"),
@@ -1160,42 +1163,45 @@ mod tests {
         // Redo should reapply the 3dd change
         // Note: redo behavior is covered in other tests
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows, vec![String::from("l1"), String::from("l5")]);
+        assert_eq!(
+            ed.buf.to_lines(),
+            vec![String::from("l1"), String::from("l5")]
+        );
     }
 
     #[test]
     fn undo_redo_dw_and_dollar() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["hello world".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "dw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "hello world");
+        assert_eq!(ed.buf.line_string(0), "hello world");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
 
-        ed.buf.rows = vec!["hello world".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into()]);
         ed.cx = 6;
         for ch in "d$".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "hello ");
+        assert_eq!(ed.buf.line_string(0), "hello ");
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "hello world");
+        assert_eq!(ed.buf.line_string(0), "hello world");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "hello ");
+        assert_eq!(ed.buf.line_string(0), "hello ");
     }
 
     #[test]
     fn counted_motion_does_not_create_undo_step() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (0..30).map(|i| format!("line{}", i)).collect();
+        ed.buf = Buffer::from_lines((0..30).map(|i| format!("line{}", i)).collect());
         let before = ed.undo_stack_len();
         for ch in "10j".chars() {
             let _ = ed.process_normal_char(ch);
@@ -1210,25 +1216,25 @@ mod tests {
     fn undo_redo_cw() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["hello world".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "cw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
         // Insert-mode undo grouping: leaving insert not required here; cw is one change
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "hello world");
+        assert_eq!(ed.buf.line_string(0), "hello world");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
     }
 
     #[test]
     fn insert_undo_break_ctrl_g_u_behaviour() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Insert;
-        ed.buf.rows = vec![String::new()];
+        ed.buf = Buffer::from_lines(vec![String::new()]);
         ed.insert_char('a');
         ed.insert_char('b');
         ed.insert_char('c');
@@ -1237,31 +1243,31 @@ mod tests {
         ed.insert_char('d');
         ed.insert_char('e');
         ed.insert_char('f');
-        assert_eq!(ed.buf.rows[0], "abcdef");
+        assert_eq!(ed.buf.line_string(0), "abcdef");
         // Undo only removes 'def'
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "abc");
+        assert_eq!(ed.buf.line_string(0), "abc");
         // Undo again removes 'abc'
         assert!(ed.undo());
-        assert_eq!(ed.buf.rows[0], "");
+        assert_eq!(ed.buf.line_string(0), "");
         // Redo restores 'abc', then 'def'
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "abc");
+        assert_eq!(ed.buf.line_string(0), "abc");
         assert!(ed.redo());
-        assert_eq!(ed.buf.rows[0], "abcdef");
+        assert_eq!(ed.buf.line_string(0), "abcdef");
     }
 
     #[test]
     fn dw_at_eol_joins_next_line() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["foo".into(), "  bar baz".into()];
+        ed.buf = Buffer::from_lines(vec!["foo".into(), "  bar baz".into()]);
         ed.cy = 0;
         ed.cx = ed.buf.line_width(0); // end of first line
         for ch in "dw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows, vec![String::from("foo  bar baz")]);
+        assert_eq!(ed.buf.to_lines(), vec![String::from("foo  bar baz")]);
         assert_eq!(ed.cy, 0);
     }
 
@@ -1269,13 +1275,13 @@ mod tests {
     fn cw_changes_word_and_enters_insert() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["hello world".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "cw".chars() {
             let _ = ed.process_normal_char(ch);
         }
-        assert_eq!(ed.buf.rows[0], "world");
+        assert_eq!(ed.buf.line_string(0), "world");
         assert!(matches!(ed.mode, Mode::Insert));
     }
 
@@ -1283,7 +1289,7 @@ mod tests {
     fn y_dollar_yanks_to_clipboard() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["hello world".into()];
+        ed.buf = Buffer::from_lines(vec!["hello world".into()]);
         ed.cy = 0;
         ed.cx = 6; // before 'w'
         for ch in "y$".chars() {
@@ -1291,25 +1297,25 @@ mod tests {
         }
         assert_eq!(ed.clipboard, "world");
         // content remains unchanged
-        assert_eq!(ed.buf.rows[0], "hello world");
+        assert_eq!(ed.buf.line_string(0), "hello world");
     }
 
     #[test]
     fn operator_3dw_across_lines() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["one two".into(), "three four".into()];
+        ed.buf = Buffer::from_lines(vec!["one two".into(), "three four".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "3dw".chars() {
             let _ = ed.process_normal_char(ch);
         }
         // Current semantics: deletes first two words across EOL, leaving the next line intact
-        assert_eq!(ed.buf.rows, vec![String::from("three four")]);
+        assert_eq!(ed.buf.to_lines(), vec![String::from("three four")]);
         // Single undo should restore original
         assert!(ed.undo());
         assert_eq!(
-            ed.buf.rows,
+            ed.buf.to_lines(),
             vec![String::from("one two"), String::from("three four")]
         );
     }
@@ -1318,7 +1324,7 @@ mod tests {
     fn operator_2cw_across_lines_enters_insert() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = vec!["one two".into(), "three four".into()];
+        ed.buf = Buffer::from_lines(vec!["one two".into(), "three four".into()]);
         ed.cy = 0;
         ed.cx = 0;
         for ch in "2cw".chars() {
@@ -1327,20 +1333,20 @@ mod tests {
         // After changing two words across lines, leaves "three four" and enters Insert
         // Current semantics: changes up to start of next line; leaves an empty first line
         assert_eq!(
-            ed.buf.rows,
+            ed.buf.to_lines(),
             vec![String::from(""), String::from("three four")]
         );
         assert!(matches!(ed.mode, super::Mode::Insert));
         // Undo restores original in single step
         assert!(ed.undo());
         assert_eq!(
-            ed.buf.rows,
+            ed.buf.to_lines(),
             vec![String::from("one two"), String::from("three four")]
         );
         // Redo re-applies change and returns to Insert
         assert!(ed.redo());
         assert_eq!(
-            ed.buf.rows,
+            ed.buf.to_lines(),
             vec![String::from(""), String::from("three four")]
         );
         assert!(matches!(ed.mode, super::Mode::Insert));
@@ -1350,7 +1356,7 @@ mod tests {
     fn ex_commands_dollar_plus_minus() {
         let mut ed = Editor::new().unwrap();
         ed.mode = Mode::Normal;
-        ed.buf.rows = (1..=10).map(|i| format!("{}", i)).collect();
+        ed.buf = Buffer::from_lines((1..=10).map(|i| format!("{}", i)).collect());
         ed.cy = 5;
         assert!(ed.execute_ex_command("$"));
         assert_eq!(ed.cy, 9);
