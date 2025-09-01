@@ -21,6 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
+        features: ["", "ropey"]
 
     steps:
       - name: Checkout
@@ -51,11 +52,31 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          FEATS='${{ matrix.features }}'
+          if [ -n "$FEATS" ]; then
+            cargo clippy --workspace --all-targets --features "$FEATS" -- -D warnings
+          else
+            cargo clippy --workspace --all-targets -- -D warnings
+          fi
 
       - name: Build
-        run: cargo build --workspace --all-features --all-targets --release
+        shell: bash
+        run: |
+          FEATS='${{ matrix.features }}'
+          if [ -n "$FEATS" ]; then
+            cargo build --workspace --all-targets --features "$FEATS" --release
+          else
+            cargo build --workspace --all-targets --release
+          fi
 
       - name: Test
-        run: cargo test --workspace --all-features --all-targets --no-fail-fast
-
+        shell: bash
+        run: |
+          FEATS='${{ matrix.features }}'
+          if [ -n "$FEATS" ]; then
+            cargo test --workspace --all-targets --features "$FEATS" --no-fail-fast
+          else
+            cargo test --workspace --all-targets --no-fail-fast
+          fi
