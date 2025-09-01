@@ -1065,7 +1065,7 @@ impl Editor {
             if clean.ends_with('\n') { clean.pop(); }
             let ins = format!("\n{}", clean);
             self.buf.insert_str_at(self.cy, end_col, &ins);
-            self.cy = self.cy + 1;
+            self.cy += 1;
             self.cx = 0;
         } else if matches!(self.clipboard_kind, ClipboardKind::Charwise) {
             let insert_col = self.cx;
