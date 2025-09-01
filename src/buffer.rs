@@ -440,4 +440,21 @@ mod tests {
         b.delete_at(1, 0);
         assert_eq!(b.line_string(0), "ab");
     }
+
+    #[test]
+    fn tabs_affect_width_and_navigation() {
+        // With TABSTOP=4: "a\tb" -> widths: 'a'(1), tab from col1 to col4 (3), 'b'(1) => total 5
+        let b = Buffer::from_lines(vec!["a\tb".to_string()]);
+        assert_eq!(Buffer::TABSTOP, 4);
+        assert_eq!(b.line_width(0), 5);
+
+        // next_col stepping from 0 -> 1 (a), then to 4 (end of tab), then to 5 (b end)
+        assert_eq!(b.next_col(0, 0), 1);
+        assert_eq!(b.next_col(1, 0), 4);
+        assert_eq!(b.next_col(4, 0), 5);
+
+        // prev_col stepping back across tab goes to its start (col 1)
+        assert_eq!(b.prev_col(4, 0), 1);
+        assert_eq!(b.prev_col(1, 0), 0);
+    }
 }
