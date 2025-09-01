@@ -94,7 +94,7 @@ dd = delete_line
 : = command
 ```
 
-Recognized actions: `move_left`, `move_down`, `move_up`, `move_right`, `line_start`, `line_end`, `goto_top`, `goto_bottom`, `insert`, `append`, `open_below`, `open_above`, `delete_char`, `delete_line`, `command`.
+Recognized actions: `move_left`, `move_down`, `move_up`, `move_right`, `line_start`, `line_end`, `goto_top`, `goto_bottom`, `insert`, `append`, `open_below`, `open_above`, `delete_char`, `delete_line`, `delete`, `change`, `yank`, `undo`, `redo`, `move_word_forward`, `move_word_backward`, `move_end_word`, `command`, `visual`, `visual_line`, `paste_after`, `paste_before`.
 
 General options:
 - `start_in_insert` (bool): start the editor in Insert mode. Values: `true/false` (also `on/off`, `1/0`).
