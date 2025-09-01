@@ -1150,17 +1150,8 @@ impl Editor {
             let row = self.buf.line_string(y);
             for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
                 if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
-                    // convert i (byte) to col
-                    let mut acc = 0usize;
-                    let mut bpos = 0usize;
-                    for g in row.graphemes(true) {
-                        if bpos >= i {
-                            break;
-                        }
-                        acc += unicode_width::UnicodeWidthStr::width(g).max(1);
-                        bpos += g.len();
-                    }
-                    return Some((y, acc));
+                    let col = self.buf.byte_to_col_in_line(y, i);
+                    return Some((y, col));
                 }
             }
             y += 1;
@@ -1181,17 +1172,8 @@ impl Editor {
                     }
                 }
                 if let Some(i) = last {
-                    // byte to col
-                    let mut acc = 0usize;
-                    let mut bpos = 0usize;
-                    for g in row.graphemes(true) {
-                        if bpos >= i {
-                            break;
-                        }
-                        acc += unicode_width::UnicodeWidthStr::width(g).max(1);
-                        bpos += g.len();
-                    }
-                    return Some((yy, acc));
+                    let col = self.buf.byte_to_col_in_line(yy, i);
+                    return Some((yy, col));
                 }
             }
             if yy == 0 {
@@ -1209,19 +1191,8 @@ impl Editor {
             for (i, seg) in UnicodeSegmentation::split_word_bound_indices(row.as_str()) {
                 if seg.chars().any(|c| c.is_alphanumeric() || c == '_') {
                     let end_b = i + seg.len();
-                    // byte to col including end
-                    let mut acc = 0usize;
-                    let mut bpos = 0usize;
-                    for g in row.graphemes(true) {
-                        let next_b = bpos + g.len();
-                        let w = unicode_width::UnicodeWidthStr::width(g).max(1);
-                        if next_b > end_b {
-                            break;
-                        }
-                        acc += w;
-                        bpos = next_b;
-                    }
-                    return Some((y, acc));
+                    let col = self.buf.byte_to_col_in_line(y, end_b);
+                    return Some((y, col));
                 }
             }
             y += 1;
