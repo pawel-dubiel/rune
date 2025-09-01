@@ -6,6 +6,9 @@ use std::path::PathBuf;
 pub enum Mode {
     Normal,
     Insert,
+    Visual,
+    VisualLine,
+    VisualBlock,
 }
 
 #[derive(Clone, Copy)]
@@ -33,6 +36,11 @@ pub enum Action {
     Undo,
     Redo,
     CommandPrompt,
+    EnterVisual,
+    EnterVisualLine,
+    EnterVisualBlock,
+    PasteAfter,
+    PasteBefore,
 }
 
 pub fn default_keymap() -> HashMap<String, Action> {
@@ -47,6 +55,8 @@ pub fn default_keymap() -> HashMap<String, Action> {
     m.insert("gg".into(), GotoTop);
     m.insert("G".into(), GotoBottom);
     m.insert("i".into(), EnterInsert);
+    m.insert("v".into(), EnterVisual);
+    m.insert("V".into(), EnterVisualLine);
     m.insert("a".into(), Append);
     m.insert("o".into(), OpenBelow);
     m.insert("O".into(), OpenAbove);
@@ -60,6 +70,8 @@ pub fn default_keymap() -> HashMap<String, Action> {
     m.insert("b".into(), MoveWordBackward);
     m.insert("e".into(), MoveEndWord);
     m.insert(":".into(), CommandPrompt);
+    m.insert("p".into(), PasteAfter);
+    m.insert("P".into(), PasteBefore);
     m
 }
 
@@ -89,6 +101,10 @@ fn parse_action(name: &str) -> Option<Action> {
         "move_word_backward" | "b" => Some(MoveWordBackward),
         "move_end_word" | "e" => Some(MoveEndWord),
         "command" | ":" => Some(CommandPrompt),
+        "visual" | "v" => Some(EnterVisual),
+        "visual_line" | "V" => Some(EnterVisualLine),
+        "paste_after" | "p" => Some(PasteAfter),
+        "paste_before" | "P" => Some(PasteBefore),
         _ => None,
     }
 }

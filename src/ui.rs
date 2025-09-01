@@ -77,20 +77,94 @@ impl Ui {
     }
 
     fn draw_rows<W: Write>(&mut self, mut w: W, ed: &Editor) -> io::Result<()> {
+        // Determine selection bounds if in Visual mode
+        enum Sel {
+            None,
+            Char {
+                sy: usize,
+                sx: usize,
+                ey: usize,
+                ex: usize,
+            },
+            Line {
+                sy: usize,
+                ey: usize,
+            },
+            Block {
+                sy: usize,
+                ey: usize,
+                left: usize,
+                right: usize,
+            },
+        }
+        let selection = match ed.mode {
+            crate::keymap::Mode::Visual => {
+                if let Some((ax, ay)) = ed.visual_anchor {
+                    let (cx, cy) = (ed.cx, ed.cy);
+                    let (sy, sx, ey, ex) = if (cy > ay) || (cy == ay && cx >= ax) {
+                        (ay, ax, cy, cx)
+                    } else {
+                        (cy, cx, ay, ax)
+                    };
+                    Sel::Char { sy, sx, ey, ex }
+                } else {
+                    Sel::None
+                }
+            }
+            crate::keymap::Mode::VisualLine => {
+                if let Some((_, ay)) = ed.visual_anchor {
+                    let cy = ed.cy;
+                    let (sy, ey) = if cy >= ay { (ay, cy) } else { (cy, ay) };
+                    Sel::Line { sy, ey }
+                } else {
+                    Sel::None
+                }
+            }
+            crate::keymap::Mode::VisualBlock => {
+                if let Some((ax, ay)) = ed.visual_anchor {
+                    let (cx, cy) = (ed.cx, ed.cy);
+                    let (sy, ey) = if cy >= ay { (ay, cy) } else { (cy, ay) };
+                    let (left, right) = if cx >= ax { (ax, cx) } else { (cx, ax) };
+                    Sel::Block {
+                        sy,
+                        ey,
+                        left,
+                        right,
+                    }
+                } else {
+                    Sel::None
+                }
+            }
+            _ => Sel::None,
+        };
+
         for row in 0..self.screen_rows as usize {
             let file_row = self.off_y + row;
-            let mut out = String::new();
+            // When highlighting selection, skip string-diff cache to ensure correct rendering
+            let use_cache = matches!(selection, Sel::None);
             if file_row >= ed.buf.line_count() {
-                out.push('~');
-            } else {
-                let line = ed.buf.line_string(file_row);
-                let mut col = 0usize;
-                let start_col = self.off_x;
-                let end_col = start_col + self.screen_cols as usize;
+                // Tilde rows
+                if !use_cache || self.prev_lines[row] != "~" {
+                    queue!(
+                        w,
+                        MoveTo(0, row as u16),
+                        Clear(ClearType::CurrentLine),
+                        Print("~")
+                    )?;
+                    self.prev_lines[row] = "~".to_string();
+                }
+                continue;
+            }
+            let line = ed.buf.line_string(file_row);
+            let mut col = 0usize;
+            let start_col = self.off_x;
+            let end_col = start_col + self.screen_cols as usize;
+            if matches!(selection, Sel::None) {
+                // Fast path: no selection; build string and cache
+                let mut out = String::new();
                 for g in line.graphemes(true) {
-                    let w = UnicodeWidthStr::width(g).max(1);
-                    let next = col + w;
-                    // Skip any grapheme whose start is left of the viewport
+                    let gw = UnicodeWidthStr::width(g).max(1);
+                    let next = col + gw;
                     if col < start_col {
                         col = next;
                         continue;
@@ -104,15 +178,86 @@ impl Ui {
                         break;
                     }
                 }
-            }
-            if self.prev_lines[row] != out {
-                queue!(
-                    w,
-                    MoveTo(0, row as u16),
-                    Clear(ClearType::CurrentLine),
-                    Print(&out)
-                )?;
-                self.prev_lines[row] = out;
+                if self.prev_lines[row] != out {
+                    queue!(
+                        w,
+                        MoveTo(0, row as u16),
+                        Clear(ClearType::CurrentLine),
+                        Print(&out)
+                    )?;
+                    self.prev_lines[row] = out;
+                }
+            } else {
+                // Visual mode: render with background on selection; no caching
+                queue!(w, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+                let (sel_start, sel_end) = match selection {
+                    Sel::Char { sy, sx, ey, ex } => {
+                        if file_row < sy || file_row > ey {
+                            (usize::MAX, usize::MAX)
+                        } else if sy == ey {
+                            (sx, ex)
+                        } else if file_row == sy {
+                            (sx, ed.buf.line_width(file_row))
+                        } else if file_row == ey {
+                            (0, ex)
+                        } else {
+                            (0, ed.buf.line_width(file_row))
+                        }
+                    }
+                    Sel::Line { sy, ey } => {
+                        if file_row < sy || file_row > ey {
+                            (usize::MAX, usize::MAX)
+                        } else {
+                            (0, ed.buf.line_width(file_row))
+                        }
+                    }
+                    Sel::Block {
+                        sy,
+                        ey,
+                        left,
+                        right,
+                    } => {
+                        if file_row < sy || file_row > ey {
+                            (usize::MAX, usize::MAX)
+                        } else {
+                            (left, right)
+                        }
+                    }
+                    Sel::None => (usize::MAX, usize::MAX),
+                };
+                for g in line.graphemes(true) {
+                    let gw = UnicodeWidthStr::width(g).max(1);
+                    let next = col + gw;
+                    if next <= start_col {
+                        col = next;
+                        continue;
+                    }
+                    if col >= end_col {
+                        break;
+                    }
+                    let overlapped = sel_start != usize::MAX && (col < sel_end && next > sel_start);
+                    if overlapped {
+                        queue!(
+                            w,
+                            SetBackgroundColor(Color::DarkGrey),
+                            SetForegroundColor(Color::White)
+                        )?;
+                    }
+                    // Grapheme never needs clipping; viewport is grapheme-aligned via start_col check
+                    queue!(w, Print(g))?;
+                    if overlapped {
+                        queue!(
+                            w,
+                            SetForegroundColor(Color::Reset),
+                            SetBackgroundColor(Color::Reset)
+                        )?;
+                    }
+                    col = next;
+                    if col >= end_col {
+                        break;
+                    }
+                }
+                // No change to prev_lines in visual mode (we always redraw)
             }
         }
         Ok(())
@@ -130,6 +275,9 @@ impl Ui {
         let mode = match ed.mode {
             crate::keymap::Mode::Normal => "NORMAL",
             crate::keymap::Mode::Insert => "INSERT",
+            crate::keymap::Mode::Visual => "VISUAL",
+            crate::keymap::Mode::VisualLine => "VISUAL-LINE",
+            crate::keymap::Mode::VisualBlock => "VISUAL-BLOCK",
         };
         let left_full = format!(
             " {}{} — {} lines [{}] ",

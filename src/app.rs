@@ -164,6 +164,10 @@ pub fn run() -> io::Result<()> {
                                         needs_redraw = true;
                                     }
                                 }
+                                KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                    ed.apply_action(Action::EnterVisualBlock);
+                                    needs_redraw = true;
+                                }
                                 KeyCode::Up => {
                                     ed.apply_action(Action::MoveUp);
                                     needs_redraw = true;
@@ -228,6 +232,63 @@ pub fn run() -> io::Result<()> {
                                             needs_redraw = true;
                                         }
                                     }
+                                }
+                                _ => {}
+                            },
+                            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => match code {
+                                KeyCode::Esc => {
+                                    ed.mode = Mode::Normal;
+                                    ed.visual_anchor = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Up => {
+                                    ed.apply_action(Action::MoveUp);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Down => {
+                                    ed.apply_action(Action::MoveDown);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Left => {
+                                    ed.apply_action(Action::MoveLeft);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Right => {
+                                    ed.apply_action(Action::MoveRight);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Home => {
+                                    ed.apply_action(Action::LineStart);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::End => {
+                                    ed.apply_action(Action::LineEnd);
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                                    match c {
+                                        'h' => ed.apply_action(Action::MoveLeft),
+                                        'j' => ed.apply_action(Action::MoveDown),
+                                        'k' => ed.apply_action(Action::MoveUp),
+                                        'l' => ed.apply_action(Action::MoveRight),
+                                        '0' => ed.apply_action(Action::LineStart),
+                                        '$' => ed.apply_action(Action::LineEnd),
+                                        'w' => ed.apply_action(Action::MoveWordForward),
+                                        'b' => ed.apply_action(Action::MoveWordBackward),
+                                        'e' => ed.apply_action(Action::MoveEndWord),
+                                        'v' => ed.apply_action(Action::EnterVisual),
+                                        'd' => {
+                                            ed.visual_delete();
+                                        }
+                                        'y' => {
+                                            ed.visual_yank();
+                                        }
+                                        'c' => {
+                                            ed.visual_change();
+                                        }
+                                        _ => {}
+                                    }
+                                    needs_redraw = true;
                                 }
                                 _ => {}
                             },

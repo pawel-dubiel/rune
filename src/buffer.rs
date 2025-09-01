@@ -340,6 +340,24 @@ impl Buffer {
             self.rope.remove(start..(start + chars_in_line));
         }
     }
+
+    pub fn insert_str_at(&mut self, y: usize, col: usize, s: &str) {
+        let idx = if y >= self.line_count() {
+            self.rope.len_chars()
+        } else {
+            self.col_to_char_index(y, col)
+        };
+        self.rope.insert(idx, s);
+    }
+
+    pub fn insert_str_at_line_start(&mut self, y: usize, s: &str) {
+        let idx = if y >= self.line_count() {
+            self.rope.len_chars()
+        } else {
+            self.line_start_char(y)
+        };
+        self.rope.insert(idx, s);
+    }
 }
 
 impl std::fmt::Display for Buffer {

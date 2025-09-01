@@ -41,6 +41,8 @@ pub struct Editor {
     pub pending_started: Option<Instant>,
     pub op_pending: Option<(Action, usize)>,
     pub clipboard: String,
+    pub clipboard_kind: ClipboardKind,
+    pub visual_anchor: Option<(usize, usize)>,
     undo_stack: Vec<EditorSnapshot>,
     redo_stack: Vec<EditorSnapshot>,
     undo_group_active: bool,
@@ -51,6 +53,13 @@ pub struct Editor {
 pub enum NormalInputResult {
     None,
     CommandPrompt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardKind {
+    Charwise,
+    Linewise,
+    Blockwise,
 }
 
 impl Editor {
@@ -125,6 +134,8 @@ impl Editor {
             pending_started: None,
             op_pending: None,
             clipboard: String::new(),
+            clipboard_kind: ClipboardKind::Charwise,
+            visual_anchor: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             undo_group_active: false,
@@ -256,6 +267,15 @@ impl Editor {
             EnterInsert => {
                 self.mode = Mode::Insert;
             }
+            EnterVisual => {
+                self.toggle_visual_mode(Mode::Visual);
+            }
+            EnterVisualLine => {
+                self.toggle_visual_mode(Mode::VisualLine);
+            }
+            EnterVisualBlock => {
+                self.toggle_visual_mode(Mode::VisualBlock);
+            }
             Append => {
                 let len = self.buf.line_width(self.cy);
                 if self.cx < len {
@@ -287,6 +307,9 @@ impl Editor {
             DeleteLine => {
                 self.on_edit_start();
                 if self.buf.line_count() > 0 {
+                    // capture linewise clipboard
+                    self.clipboard = self.buf.line_string(self.cy);
+                    self.clipboard_kind = ClipboardKind::Linewise;
                     self.buf.delete_line(self.cy);
                     if self.cy >= self.buf.line_count() {
                         self.cy = self.buf.line_count().saturating_sub(1);
@@ -315,12 +338,44 @@ impl Editor {
             MoveWordForward | MoveWordBackward | MoveEndWord => {
                 self.apply_motion(act, 1, None);
             }
+            PasteAfter => {
+                self.paste_after();
+            }
+            PasteBefore => {
+                self.paste_before();
+            }
         }
         self.clamp_cursor();
     }
 
+    fn toggle_visual_mode(&mut self, target: Mode) {
+        match self.mode {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                if std::mem::discriminant(&self.mode) == std::mem::discriminant(&target) {
+                    self.mode = Mode::Normal;
+                    self.visual_anchor = None;
+                } else {
+                    // Switch visual mode, keep anchor
+                    self.mode = target;
+                    if self.visual_anchor.is_none() {
+                        self.visual_anchor = Some((self.cx, self.cy));
+                    }
+                }
+            }
+            _ => {
+                self.mode = target;
+                self.visual_anchor = Some((self.cx, self.cy));
+            }
+        }
+    }
+
     fn apply_action_count(&mut self, act: Action, count: usize) {
         let n = count.max(1);
+        // Special-case multi-line delete to capture full clipboard
+        if matches!(act, Action::DeleteLine) && n > 1 {
+            self.delete_n_lines(n);
+            return;
+        }
         // Only group counts for editing actions; movement-only counts should not create undo steps
         if n > 1 && !self.count_group_active && Self::is_editing_action(act) {
             let snap = EditorSnapshot::from_editor(self);
@@ -390,6 +445,13 @@ impl Editor {
                         self.pending_started = None;
                         return NormalInputResult::CommandPrompt;
                     } else {
+                        if matches!(act, Action::EnterVisual) {
+                            // toggle visual immediately, ignore counts
+                            self.apply_action(act);
+                            self.pending.clear();
+                            self.pending_started = None;
+                            return NormalInputResult::None;
+                        }
                         // Special Vim semantics for counts on gg and G
                         if let Some(n) = count {
                             if rest == "gg" {
@@ -500,6 +562,15 @@ impl Editor {
                     self.pending_started = None;
                     return NormalInputResult::CommandPrompt;
                 } else {
+                    if matches!(act, Action::EnterVisual) {
+                        self.apply_action(act);
+                        self.pending = self.pending[consumed..].to_string();
+                        if self.pending.is_empty() {
+                            self.pending_started = None;
+                            return NormalInputResult::None;
+                        }
+                        continue;
+                    }
                     // Handle counts on gg/G in greedy resolution too
                     let candidate = &self.pending[..consumed];
                     let (cnt, idx2) = Self::parse_count_prefix(candidate);
@@ -726,6 +797,15 @@ impl Editor {
             if (ey, ex) > (sy, sx) {
                 match op_kind {
                     Action::OperatorDelete | Action::OperatorChange => {
+                        // Save clipboard for delete/change
+                        self.clipboard = self.extract_range((sy, sx), (ey, ex), inclusive);
+                        // Detect linewise selection heuristically
+                        self.clipboard_kind = if sy < ey && sx == 0 && ex >= self.buf.line_width(ey)
+                        {
+                            ClipboardKind::Linewise
+                        } else {
+                            ClipboardKind::Charwise
+                        };
                         self.delete_range((sy, sx), (ey, ex), inclusive);
                         self.cx = sx;
                         self.cy = sy;
@@ -736,6 +816,12 @@ impl Editor {
                     }
                     Action::OperatorYank => {
                         self.clipboard = self.extract_range((sy, sx), (ey, ex), inclusive);
+                        self.clipboard_kind = if sy < ey && sx == 0 && ex >= self.buf.line_width(ey)
+                        {
+                            ClipboardKind::Linewise
+                        } else {
+                            ClipboardKind::Charwise
+                        };
                     }
                     _ => {}
                 }
@@ -744,6 +830,287 @@ impl Editor {
             self.cx = target.1;
             self.cy = target.0;
         }
+    }
+
+    fn visual_bounds_char(&self) -> Option<((usize, usize), (usize, usize))> {
+        let (ax, ay) = self.visual_anchor?;
+        let (bx, by) = (self.cx, self.cy);
+        let (sy, sx, ey, ex) = if (by > ay) || (by == ay && bx >= ax) {
+            (ay, ax, by, bx)
+        } else {
+            (by, bx, ay, ax)
+        };
+        if (ey, ex) > (sy, sx) {
+            Some(((sy, sx), (ey, ex)))
+        } else {
+            None
+        }
+    }
+
+    fn visual_bounds_line(&self) -> Option<(usize, usize)> {
+        let (_, ay) = self.visual_anchor?;
+        let cy = self.cy;
+        let (sy, ey) = if cy >= ay { (ay, cy) } else { (cy, ay) };
+        Some((sy, ey))
+    }
+
+    fn visual_bounds_block(&self) -> Option<(usize, usize, usize, usize)> {
+        let (ax, ay) = self.visual_anchor?;
+        let (cx, cy) = (self.cx, self.cy);
+        let (sy, ey) = if cy >= ay { (ay, cy) } else { (cy, ay) };
+        let (left, right) = if cx >= ax { (ax, cx) } else { (cx, ax) };
+        Some((sy, ey, left, right))
+    }
+
+    pub fn visual_delete(&mut self) {
+        match self.mode {
+            Mode::Visual => {
+                if let Some(((sy, sx), (ey, ex))) = self.visual_bounds_char() {
+                    self.on_edit_start();
+                    self.clipboard = self.extract_range((sy, sx), (ey, ex), false);
+                    self.clipboard_kind = if sy < ey && sx == 0 && ex >= self.buf.line_width(ey) {
+                        ClipboardKind::Linewise
+                    } else {
+                        ClipboardKind::Charwise
+                    };
+                    self.delete_range((sy, sx), (ey, ex), false);
+                    self.cx = sx;
+                    self.cy = sy;
+                    self.dirty = true;
+                }
+            }
+            Mode::VisualLine => {
+                if let Some((sy, ey)) = self.visual_bounds_line() {
+                    self.on_edit_start();
+                    let mut parts = Vec::new();
+                    for y in sy..=ey {
+                        parts.push(self.buf.line_string(y));
+                    }
+                    self.clipboard = parts.join("\n");
+                    self.clipboard_kind = ClipboardKind::Linewise;
+                    for _ in sy..=ey {
+                        self.buf.delete_line(sy);
+                    }
+                    self.cy = sy;
+                    self.cx = 0;
+                    self.dirty = true;
+                }
+            }
+            Mode::VisualBlock => {
+                if let Some((sy, ey, left, right)) = self.visual_bounds_block() {
+                    self.on_edit_start();
+                    self.clipboard = self.extract_block(sy, ey, left, right);
+                    self.clipboard_kind = ClipboardKind::Blockwise;
+                    self.delete_block(sy, ey, left, right);
+                    self.cy = sy;
+                    self.cx = left;
+                    self.dirty = true;
+                }
+            }
+            _ => {}
+        }
+        self.mode = Mode::Normal;
+        self.visual_anchor = None;
+    }
+
+    pub fn visual_yank(&mut self) {
+        match self.mode {
+            Mode::Visual => {
+                if let Some(((sy, sx), (ey, ex))) = self.visual_bounds_char() {
+                    self.clipboard = self.extract_range((sy, sx), (ey, ex), false);
+                    self.clipboard_kind = if sy < ey && sx == 0 && ex >= self.buf.line_width(ey) {
+                        ClipboardKind::Linewise
+                    } else {
+                        ClipboardKind::Charwise
+                    };
+                }
+            }
+            Mode::VisualLine => {
+                if let Some((sy, ey)) = self.visual_bounds_line() {
+                    let mut parts = Vec::new();
+                    for y in sy..=ey {
+                        parts.push(self.buf.line_string(y));
+                    }
+                    self.clipboard = parts.join("\n");
+                    self.clipboard_kind = ClipboardKind::Linewise;
+                }
+            }
+            Mode::VisualBlock => {
+                if let Some((sy, ey, left, right)) = self.visual_bounds_block() {
+                    self.clipboard = self.extract_block(sy, ey, left, right);
+                    self.clipboard_kind = ClipboardKind::Blockwise;
+                }
+            }
+            _ => {}
+        }
+        self.mode = Mode::Normal;
+        self.visual_anchor = None;
+    }
+
+    pub fn visual_change(&mut self) {
+        match self.mode {
+            Mode::Visual => {
+                if let Some(((sy, sx), (ey, ex))) = self.visual_bounds_char() {
+                    self.on_edit_start();
+                    self.clipboard = self.extract_range((sy, sx), (ey, ex), false);
+                    self.clipboard_kind = if sy < ey && sx == 0 && ex >= self.buf.line_width(ey) {
+                        ClipboardKind::Linewise
+                    } else {
+                        ClipboardKind::Charwise
+                    };
+                    self.delete_range((sy, sx), (ey, ex), false);
+                    self.cx = sx;
+                    self.cy = sy;
+                    self.dirty = true;
+                    self.mode = Mode::Insert;
+                } else {
+                    self.mode = Mode::Insert;
+                }
+            }
+            Mode::VisualLine => {
+                if let Some((sy, ey)) = self.visual_bounds_line() {
+                    self.on_edit_start();
+                    let mut parts = Vec::new();
+                    for y in sy..=ey {
+                        parts.push(self.buf.line_string(y));
+                    }
+                    self.clipboard = parts.join("\n");
+                    self.clipboard_kind = ClipboardKind::Linewise;
+                    for _ in sy..=ey {
+                        self.buf.delete_line(sy);
+                    }
+                    self.cy = sy;
+                    self.cx = 0;
+                    self.dirty = true;
+                    self.mode = Mode::Insert;
+                } else {
+                    self.mode = Mode::Insert;
+                }
+            }
+            Mode::VisualBlock => {
+                if let Some((sy, ey, left, right)) = self.visual_bounds_block() {
+                    self.on_edit_start();
+                    self.clipboard = self.extract_block(sy, ey, left, right);
+                    self.clipboard_kind = ClipboardKind::Blockwise;
+                    self.delete_block(sy, ey, left, right);
+                    self.cy = sy;
+                    self.cx = left;
+                    self.dirty = true;
+                    self.mode = Mode::Insert;
+                } else {
+                    self.mode = Mode::Insert;
+                }
+            }
+            _ => self.mode = Mode::Insert,
+        }
+        self.visual_anchor = None;
+    }
+
+    fn extract_block(&self, sy: usize, ey: usize, left: usize, right: usize) -> String {
+        let mut out = String::new();
+        for y in sy..=ey {
+            let lw = self.buf.line_width(y);
+            let start = left.min(lw);
+            let end = right.min(lw);
+            let s = self.extract_range((y, start), (y, end), false);
+            out.push_str(&s);
+            if y != ey {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    fn delete_block(&mut self, sy: usize, ey: usize, left: usize, right: usize) {
+        for y in (sy..=ey).rev() {
+            let lw = self.buf.line_width(y);
+            let start = left.min(lw);
+            let end = right.min(lw);
+            self.delete_range((y, start), (y, end), false);
+        }
+    }
+
+    fn delete_n_lines(&mut self, count: usize) {
+        if self.buf.line_count() == 0 {
+            return;
+        }
+        self.on_edit_start();
+        let sy = self.cy;
+        let ey = (sy + count - 1).min(self.buf.line_count().saturating_sub(1));
+        let mut parts = Vec::new();
+        for y in sy..=ey {
+            parts.push(self.buf.line_string(y));
+        }
+        self.clipboard = parts.join("\n");
+        self.clipboard_kind = ClipboardKind::Linewise;
+        for _ in sy..=ey {
+            self.buf.delete_line(sy);
+        }
+        if self.cy >= self.buf.line_count() {
+            self.cy = self.buf.line_count().saturating_sub(1);
+        }
+        self.cx = 0;
+        self.dirty = true;
+    }
+
+    fn paste_after(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        self.on_edit_start();
+        if matches!(self.clipboard_kind, ClipboardKind::Linewise) {
+            // Append after current line: insert at end of current line a newline + clipboard
+            let end_col = self.buf.line_width(self.cy);
+            let mut clean = self.clipboard.clone();
+            if clean.ends_with('\n') { clean.pop(); }
+            let ins = format!("\n{}", clean);
+            self.buf.insert_str_at(self.cy, end_col, &ins);
+            self.cy = self.cy + 1;
+            self.cx = 0;
+        } else if matches!(self.clipboard_kind, ClipboardKind::Charwise) {
+            let insert_col = self.cx;
+            self.buf.insert_str_at(self.cy, insert_col, &self.clipboard);
+            // place cursor after inserted chunk simply at insert_col
+            self.cx = insert_col;
+        } else {
+            // Blockwise paste after: insert starting on the next line at current column
+            let start_line = self.cy + 1;
+            self.paste_block_at(start_line, self.cx);
+        }
+        self.dirty = true;
+    }
+
+    fn paste_before(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        self.on_edit_start();
+        if matches!(self.clipboard_kind, ClipboardKind::Linewise) {
+            let mut text = self.clipboard.clone();
+            text.push('\n');
+            let insert_line = self.cy;
+            self.buf.insert_str_at_line_start(insert_line, &text);
+            self.cx = 0;
+        } else if matches!(self.clipboard_kind, ClipboardKind::Charwise) {
+            self.buf.insert_str_at(self.cy, self.cx, &self.clipboard);
+        } else {
+            // Blockwise paste before: insert starting on current line at current column
+            let start_line = self.cy;
+            self.paste_block_at(start_line, self.cx);
+        }
+        self.dirty = true;
+    }
+
+    fn paste_block_at(&mut self, start_line: usize, col: usize) {
+        let lines: Vec<&str> = self.clipboard.split('\n').collect();
+        let mut y = start_line;
+        for seg in lines {
+            if y >= self.buf.line_count() { break; }
+            self.buf.insert_str_at(y, col, seg);
+            y += 1;
+        }
+        self.cy = start_line;
+        self.cx = col;
     }
 
     fn extract_range(&self, start: (usize, usize), end: (usize, usize), inclusive: bool) -> String {
@@ -989,7 +1356,21 @@ mod tests {
             let _ = ed.process_normal_char(ch);
         }
         assert_eq!(ed.buf.to_lines(), vec!["l1".to_string(), "l5".to_string()]);
-        assert_eq!(ed.cy, 1); // cursor on what became former l5
+        // Paste should bring back the three deleted lines below current
+        for ch in "P".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(
+            ed.buf.to_lines(),
+            vec![
+                String::from("l1"),
+                String::from("l2"),
+                String::from("l3"),
+                String::from("l4"),
+                String::from("l5")
+            ]
+        );
+        assert_eq!(ed.cy, 1);
     }
 
     #[test]
@@ -1097,6 +1478,10 @@ mod tests {
             let _ = ed.process_normal_char(ch);
         }
         assert!(ed.buf.line_string(0).len() < start_text.len());
+        // paste charwise after cursor
+        for ch in "p".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
     }
 
     #[test]
@@ -1296,8 +1681,11 @@ mod tests {
             let _ = ed.process_normal_char(ch);
         }
         assert_eq!(ed.clipboard, "world");
-        // content remains unchanged
-        assert_eq!(ed.buf.line_string(0), "hello world");
+        // paste after cursor
+        for ch in "p".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.buf.line_string(0), "hello worldworld");
     }
 
     #[test]
@@ -1366,5 +1754,90 @@ mod tests {
         assert_eq!(ed.cy, 6);
         assert!(ed.execute_ex_command("-100"));
         assert_eq!(ed.cy, 0);
+    }
+
+    #[test]
+    fn visual_mode_basic_delete_yank_change() {
+        let mut ed = Editor::new().unwrap();
+        ed.buf = Buffer::from_lines(vec!["one two three".into(), "four five".into()]);
+        ed.mode = Mode::Normal;
+        ed.cy = 0;
+        ed.cx = 0;
+        // Enter visual, move to end of 'two', delete
+        ed.apply_action(Action::EnterVisual);
+        // Move to the end of the second word using motions
+        ed.apply_action(Action::MoveWordForward); // at start of 'two'
+        let end = ed.buf.end_of_word(ed.cx, ed.cy);
+        ed.cx = end;
+        ed.visual_delete();
+        assert_eq!(ed.buf.line_string(0), " three");
+        assert!(matches!(ed.mode, Mode::Normal));
+
+        // Visual yank across lines
+        ed.cx = 0;
+        ed.apply_action(Action::EnterVisual);
+        ed.cy = 1; // move to next line start
+        ed.cx = 4; // after 'four'
+        ed.visual_yank();
+        assert_eq!(ed.clipboard, " three\nfour");
+        ed.clipboard_kind = ClipboardKind::Linewise;
+        let cy_before = ed.cy;
+        for ch in "p".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(ed.cy, cy_before + 1);
+
+        // Visual change word at start of line
+        ed.cy = 1;
+        ed.cx = 0;
+        ed.apply_action(Action::EnterVisual);
+        ed.apply_action(Action::MoveWordForward);
+        ed.visual_change();
+        assert!(matches!(ed.mode, Mode::Insert));
+        assert_eq!(ed.buf.line_string(1), "five");
+    }
+
+    #[test]
+    fn visual_line_yank_and_paste() {
+        let mut ed = Editor::new().unwrap();
+        ed.buf = Buffer::from_lines(vec!["aa".into(), "bb".into(), "cc".into()]);
+        ed.mode = Mode::Normal;
+        ed.cy = 0;
+        ed.apply_action(Action::EnterVisualLine);
+        ed.apply_action(Action::MoveDown);
+        ed.visual_yank();
+        assert_eq!(ed.clipboard, "aa\nbb");
+        ed.cy = 2;
+        for ch in "p".chars() {
+            let _ = ed.process_normal_char(ch);
+        }
+        assert_eq!(
+            ed.buf.to_lines(),
+            vec![
+                String::from("aa"),
+                String::from("bb"),
+                String::from("cc"),
+                String::from("aa"),
+                String::from("bb")
+            ]
+        );
+    }
+
+    #[test]
+    fn visual_block_yank_and_paste() {
+        let mut ed = Editor::new().unwrap();
+        ed.buf = Buffer::from_lines(vec!["abcd".into(), "abcd".into()]);
+        ed.mode = Mode::Normal;
+        ed.cy = 0;
+        ed.cx = 1;
+        ed.apply_action(Action::EnterVisualBlock);
+        ed.cy = 1;
+        ed.cx = 3;
+        ed.visual_yank();
+        assert_eq!(ed.clipboard, "bc\nbc");
+        ed.cy = 1;
+        ed.cx = 0;
+        ed.paste_before();
+        assert_eq!(ed.buf.to_lines(), vec![String::from("abcd"), String::from("bcabcd")]);
     }
 }
