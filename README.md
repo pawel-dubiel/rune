@@ -27,6 +27,7 @@ A tiny, fast terminal text editor written in Rust. It focuses on instant startup
 
 ## Build
 - Release build: `cargo build --release`
+- With Ropey buffer: `cargo build --features ropey`
 - Binary path: `./target/release/rune`
 
 ## Install (CLI)
@@ -37,6 +38,7 @@ A tiny, fast terminal text editor written in Rust. It focuses on instant startup
 ## Run
 - Open a file: `cargo run --release -- path/to/file.txt`
 - Start empty (no file): `cargo run --release`
+- With Ropey: `cargo run --features ropey -- -- path/to/file.txt`
 
 ## Keys
 Default bindings use Vim conventions. The editor is modeless to launch, but starts in Normal mode.
@@ -105,7 +107,8 @@ General options:
 
 ## Development
 - Format: `cargo fmt`
-- Lint: `cargo clippy`
+- Lint: `cargo clippy` (Ropey: `cargo clippy --features ropey`)
+- Tests: `cargo test` (Ropey: `cargo test --features ropey`)
 - Toolchain pinned in `rust-toolchain.toml` to stable.
 
 ### Git Hooks
