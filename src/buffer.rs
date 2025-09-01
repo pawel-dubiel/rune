@@ -65,7 +65,11 @@ impl Buffer {
 
     pub fn line_width(&self, y: usize) -> usize {
         let s = self.line_string(y);
-        UnicodeWidthStr::width(s.as_str())
+        let mut acc = 0usize;
+        for g in s.graphemes(true) {
+            acc += Self::gw_at(acc, g);
+        }
+        acc
     }
 
     fn line_start_char(&self, y: usize) -> usize {
@@ -77,7 +81,7 @@ impl Buffer {
         let mut acc = 0usize;
         let mut byte_idx = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g).max(1);
+            let w = Self::gw_at(acc, g);
             if acc + w > col {
                 return byte_idx;
             }
@@ -134,7 +138,7 @@ impl Buffer {
         let mut prev_b = 0usize;
         let mut cur_b = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g).max(1);
+            let w = Self::gw_at(acc, g);
             if acc >= col {
                 break;
             }
@@ -165,7 +169,7 @@ impl Buffer {
         let mut end_b = None::<usize>;
         let mut cur_b = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g).max(1);
+            let w = Self::gw_at(acc, g);
             let next = acc + w;
             if acc <= col && col < next {
                 start_b = Some(cur_b);
@@ -205,7 +209,7 @@ impl Buffer {
         let mut acc = 0usize;
         let mut prev_acc = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g).max(1);
+            let w = Self::gw_at(acc, g);
             if acc >= col {
                 break;
             }
@@ -217,13 +221,13 @@ impl Buffer {
 
     pub fn next_col(&self, col: usize, y: usize) -> usize {
         let row = self.line_string(y);
-        let len = UnicodeWidthStr::width(row.as_str());
+        let len = self.line_width(y);
         if col >= len {
             return len;
         }
         let mut acc = 0usize;
         for g in row.graphemes(true) {
-            let w = UnicodeWidthStr::width(g).max(1);
+            let w = Self::gw_at(acc, g);
             if acc >= col {
                 return (acc + w).min(len);
             }
