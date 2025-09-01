@@ -16,6 +16,17 @@ impl Default for Buffer {
 }
 
 impl Buffer {
+    pub const TABSTOP: usize = 4;
+
+    fn gw_at(col: usize, g: &str) -> usize {
+        if g == "\t" {
+            let ts = Self::TABSTOP.max(1);
+            let next_tab = ((col / ts) + 1) * ts;
+            next_tab - col
+        } else {
+            UnicodeWidthStr::width(g).max(1)
+        }
+    }
     pub fn from_string(s: String) -> Self {
         Self {
             rope: Rope::from_str(&s.replace('\r', "")),
