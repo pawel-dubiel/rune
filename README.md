@@ -57,15 +57,20 @@ Default bindings use Vim conventions. The editor is modeless to launch, but star
    - One Insert session is a single undo step; use `Ctrl-g u` to break the undo group while staying in Insert.
 
 ## Configurable Key Bindings
-You can override Normal-mode bindings and general options with a simple config file. Search order:
+You can override Normal-mode bindings and general options with a simple config file. Search order (new name first, then legacy):
 
-1. `./vedit.conf`
-2. `$XDG_CONFIG_HOME/vedit/config.conf`
-3. `~/.config/vedit/config.conf`
+1. `./rune.conf`
+2. `$XDG_CONFIG_HOME/rune/config.conf`
+3. `~/.config/rune/config.conf`
+4. `./vedit.conf`
+5. `$XDG_CONFIG_HOME/vedit/config.conf`
+6. `~/.config/vedit/config.conf`
+7. Windows: `%APPDATA%/rune/config.conf`
+8. Windows (legacy): `%APPDATA%/vedit/config.conf`
 
 Format is a minimal INI-like file. Supported sections: `[general]`, `[normal]`.
 
-Example `vedit.conf`:
+Example `rune.conf`:
 
 ```
 [general]

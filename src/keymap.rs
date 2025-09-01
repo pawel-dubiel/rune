@@ -122,6 +122,8 @@ pub fn load_config(mut base: HashMap<String, Action>) -> EditorConfig {
     // 4) ./vedit.conf
     // 5) $XDG_CONFIG_HOME/vedit/config.conf
     // 6) ~/.config/vedit/config.conf
+    // 7) %APPDATA%/rune/config.conf (Windows)
+    // 8) %APPDATA%/vedit/config.conf (Windows, legacy)
     let mut candidates = Vec::new();
     candidates.push(PathBuf::from("rune.conf"));
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
@@ -145,6 +147,18 @@ pub fn load_config(mut base: HashMap<String, Action>) -> EditorConfig {
         let mut p = PathBuf::from(home);
         p.push(".config/vedit/config.conf");
         candidates.push(p);
+    }
+    // Windows (APPDATA) locations
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let mut p = PathBuf::from(&appdata);
+        p.push("rune");
+        p.push("config.conf");
+        candidates.push(p);
+
+        let mut p2 = PathBuf::from(&appdata);
+        p2.push("vedit");
+        p2.push("config.conf");
+        candidates.push(p2);
     }
     let mut start_in_insert = false;
     for path in candidates {
