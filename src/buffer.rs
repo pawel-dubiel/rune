@@ -261,16 +261,7 @@ impl Buffer {
             }
         }
         let target_b = found.unwrap_or(row.len());
-        let mut acc2 = 0usize;
-        let mut bpos = 0usize;
-        for g in row.graphemes(true) {
-            if bpos >= target_b {
-                break;
-            }
-            acc2 += UnicodeWidthStr::width(g).max(1);
-            bpos += g.len();
-        }
-        acc2
+        self.byte_to_col_in_line(y, target_b)
     }
 
     pub fn prev_word_start(&self, col: usize, y: usize) -> usize {
@@ -286,16 +277,7 @@ impl Buffer {
             }
         }
         let target_b = prev.unwrap_or(0);
-        let mut acc2 = 0usize;
-        let mut bpos = 0usize;
-        for g in row.graphemes(true) {
-            if bpos >= target_b {
-                break;
-            }
-            acc2 += UnicodeWidthStr::width(g).max(1);
-            bpos += g.len();
-        }
-        acc2
+        self.byte_to_col_in_line(y, target_b)
     }
 
     pub fn end_of_word(&self, col: usize, y: usize) -> usize {
@@ -316,18 +298,7 @@ impl Buffer {
             }
         }
         let target_b = cur_word_end.or(after).unwrap_or(row.len());
-        let mut acc2 = 0usize;
-        let mut bpos = 0usize;
-        for g in row.graphemes(true) {
-            let next_b = bpos + g.len();
-            let w = UnicodeWidthStr::width(g).max(1);
-            if next_b > target_b {
-                break;
-            }
-            acc2 += w;
-            bpos = next_b;
-        }
-        acc2
+        self.byte_to_col_in_line(y, target_b)
     }
 
     // Utilities for editor multi-line ops
@@ -372,6 +343,22 @@ impl Buffer {
             self.line_start_char(y)
         };
         self.rope.insert(idx, s);
+    }
+
+    pub fn byte_to_col_in_line(&self, y: usize, target_b: usize) -> usize {
+        let row = self.line_string(y);
+        let mut acc = 0usize;
+        let mut bpos = 0usize;
+        for g in row.graphemes(true) {
+            let next_b = bpos + g.len();
+            let w = Self::gw_at(acc, g);
+            if next_b > target_b {
+                break;
+            }
+            acc += w;
+            bpos = next_b;
+        }
+        acc
     }
 }
 
