@@ -10,6 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::editor::Editor;
+use crate::buffer::Buffer;
 
 const STATUS_TIMEOUT_MS: u64 = 2000;
 
@@ -77,6 +78,15 @@ impl Ui {
     }
 
     fn draw_rows<W: Write>(&mut self, mut w: W, ed: &Editor) -> io::Result<()> {
+        fn gw_at(col: usize, g: &str) -> usize {
+            if g == "\t" {
+                let ts = Buffer::TABSTOP.max(1);
+                let next = ((col / ts) + 1) * ts;
+                next - col
+            } else {
+                UnicodeWidthStr::width(g).max(1)
+            }
+        }
         // Determine selection bounds if in Visual mode
         enum Sel {
             None,
@@ -163,7 +173,7 @@ impl Ui {
                 // Fast path: no selection; build string and cache
                 let mut out = String::new();
                 for g in line.graphemes(true) {
-                    let gw = UnicodeWidthStr::width(g).max(1);
+                    let gw = gw_at(col, g);
                     let next = col + gw;
                     if col < start_col {
                         col = next;
@@ -172,7 +182,11 @@ impl Ui {
                     if col >= end_col {
                         break;
                     }
-                    out.push_str(g);
+                    if g == "\t" {
+                        out.push_str(&" ".repeat(gw));
+                    } else {
+                        out.push_str(g);
+                    }
                     col = next;
                     if col >= end_col {
                         break;
@@ -226,7 +240,7 @@ impl Ui {
                     Sel::None => (usize::MAX, usize::MAX),
                 };
                 for g in line.graphemes(true) {
-                    let gw = UnicodeWidthStr::width(g).max(1);
+                    let gw = gw_at(col, g);
                     let next = col + gw;
                     if next <= start_col {
                         col = next;
@@ -243,8 +257,12 @@ impl Ui {
                             SetForegroundColor(Color::White)
                         )?;
                     }
-                    // Grapheme never needs clipping; viewport is grapheme-aligned via start_col check
-                    queue!(w, Print(g))?;
+                    // Render tabs as spaces according to tabstop
+                    if g == "\t" {
+                        queue!(w, Print(" ".repeat(gw)))?;
+                    } else {
+                        queue!(w, Print(g))?;
+                    }
                     if overlapped {
                         queue!(
                             w,
