@@ -189,7 +189,11 @@ impl Editor {
     pub fn insert_char(&mut self, ch: char) {
         use unicode_width::UnicodeWidthChar;
         self.on_edit_start();
-        self.buf.insert_char(self.cx, self.cy, ch);
+        if let Err(_) = self.buf.insert_char(self.cx, self.cy, ch) {
+            // For now, silently ignore errors to maintain compatibility
+            // TODO: Handle buffer errors properly
+            return;
+        }
         self.cx += UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
         self.dirty = true;
     }

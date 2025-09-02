@@ -2,6 +2,13 @@ use ropey::Rope;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum BufferError {
+    OutOfBounds { line: usize, max_lines: usize },
+    InvalidColumn { column: usize, max_columns: usize },
+    InvalidCharIndex { char_index: usize, max_chars: usize },
+}
+
 #[derive(Clone)]
 pub struct Buffer {
     rope: Rope,
@@ -50,6 +57,14 @@ impl Buffer {
         self.rope.len_lines()
     }
 
+    /// Returns the string content of the specified line.
+    ///
+    /// # Arguments
+    /// * `y` - The line index (0-based)
+    ///
+    /// # Returns
+    /// The line content as a String, or empty string if line index is out of bounds.
+    /// The returned string does not include the trailing newline character.
     pub fn line_string(&self, y: usize) -> String {
         if y >= self.line_count() {
             return String::new();
@@ -103,11 +118,27 @@ impl Buffer {
         self.line_start_char(y) + char_in_line
     }
 
-    pub fn insert_char(&mut self, col: usize, y: usize, ch: char) {
+    /// Inserts a character at the specified column and line position.
+    /// Returns an error if the line or column is out of bounds.
+    pub fn insert_char(&mut self, col: usize, y: usize, ch: char) -> Result<(), BufferError> {
+        if y >= self.line_count() {
+            return Err(BufferError::OutOfBounds {
+                line: y,
+                max_lines: self.line_count(),
+            });
+        }
+        let line_width = self.line_width(y);
+        if col > line_width {
+            return Err(BufferError::InvalidColumn {
+                column: col,
+                max_columns: line_width,
+            });
+        }
         let idx = self.col_to_char_index(y, col);
         let mut buf = [0u8; 4];
         let s = ch.encode_utf8(&mut buf);
         self.rope.insert(idx, s);
+        Ok(())
     }
 
     pub fn insert_newline(&mut self, col: usize, y: usize) {
@@ -128,15 +159,32 @@ impl Buffer {
         self.rope.remove(start..end);
     }
 
+    /// Deletes the character before the specified column position.
+    /// Returns the new column position after deletion.
     pub fn delete_prev(&mut self, col: usize, y: usize) -> usize {
         let row = self.line_string(y);
         if row.is_empty() || col == 0 {
             return 0;
         }
+
+        let (prev_col, byte_range) = self.find_prev_grapheme_at_col(y, col);
+        if let Some((start_b, end_b)) = byte_range {
+            self.remove_grapheme_at_byte_range(y, start_b, end_b);
+            prev_col
+        } else {
+            col.saturating_sub(1)
+        }
+    }
+
+    /// Finds the previous grapheme cluster at the given column.
+    /// Returns (column_position, optional_byte_range).
+    fn find_prev_grapheme_at_col(&self, y: usize, col: usize) -> (usize, Option<(usize, usize)>) {
+        let row = self.line_string(y);
         let mut acc = 0usize;
         let mut prev_acc = 0usize;
         let mut prev_b = 0usize;
         let mut cur_b = 0usize;
+
         for g in row.graphemes(true) {
             let w = Self::gw_at(acc, g);
             if acc >= col {
@@ -147,16 +195,22 @@ impl Buffer {
             cur_b += g.len();
             acc += w;
         }
+
         if prev_b < cur_b && cur_b <= row.len() {
-            // Convert byte range within line to char indices in rope
-            let start_chars = row[..prev_b].chars().count();
-            let end_chars = row[..cur_b].chars().count();
-            let start = self.line_start_char(y) + start_chars;
-            let end = self.line_start_char(y) + end_chars;
-            self.rope.remove(start..end);
-            return prev_acc;
+            (prev_acc, Some((prev_b, cur_b)))
+        } else {
+            (col.saturating_sub(1), None)
         }
-        col.saturating_sub(1)
+    }
+
+    /// Removes a grapheme cluster at the specified byte range within a line.
+    fn remove_grapheme_at_byte_range(&mut self, y: usize, start_b: usize, end_b: usize) {
+        let row = self.line_string(y);
+        let start_chars = row[..start_b].chars().count();
+        let end_chars = row[..end_b].chars().count();
+        let start = self.line_start_char(y) + start_chars;
+        let end = self.line_start_char(y) + end_chars;
+        self.rope.remove(start..end);
     }
 
     pub fn delete_at(&mut self, col: usize, y: usize) {
@@ -382,7 +436,7 @@ mod tests {
     #[test]
     fn insert_char_and_navigation_grapheme() {
         let mut b = Buffer::from_lines(vec!["a".to_string()]);
-        b.insert_char(1, 0, '😄');
+        b.insert_char(1, 0, '😄').unwrap();
         assert_eq!(b.line_string(0), "a😄");
         assert_eq!(b.next_col(0, 0), 1);
         assert_eq!(b.next_col(1, 0), 3);
