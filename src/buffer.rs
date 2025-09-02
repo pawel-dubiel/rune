@@ -6,7 +6,6 @@ use unicode_width::UnicodeWidthStr;
 pub enum BufferError {
     OutOfBounds { line: usize, max_lines: usize },
     InvalidColumn { column: usize, max_columns: usize },
-    InvalidCharIndex { char_index: usize, max_chars: usize },
 }
 
 #[derive(Clone)]
