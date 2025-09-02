@@ -33,12 +33,12 @@ impl Buffer {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn from_lines(lines: Vec<String>) -> Self {
         Self::from_string(lines.join("\n"))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn to_lines(&self) -> Vec<String> {
         self.to_string()
             .split('\n')
@@ -91,7 +91,7 @@ impl Buffer {
         byte_idx.min(row.len())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn col_to_byte(&self, y: usize, col: usize) -> usize {
         self.col_to_line_byte(y, col)
     }
