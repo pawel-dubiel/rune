@@ -1062,7 +1062,9 @@ impl Editor {
             // Append after current line: insert at end of current line a newline + clipboard
             let end_col = self.buf.line_width(self.cy);
             let mut clean = self.clipboard.clone();
-            if clean.ends_with('\n') { clean.pop(); }
+            if clean.ends_with('\n') {
+                clean.pop();
+            }
             let ins = format!("\n{}", clean);
             self.buf.insert_str_at(self.cy, end_col, &ins);
             self.cy += 1;
@@ -1105,7 +1107,9 @@ impl Editor {
         let lines: Vec<&str> = self.clipboard.split('\n').collect();
         let mut y = start_line;
         for seg in lines {
-            if y >= self.buf.line_count() { break; }
+            if y >= self.buf.line_count() {
+                break;
+            }
             self.buf.insert_str_at(y, col, seg);
             y += 1;
         }
@@ -1809,6 +1813,9 @@ mod tests {
         ed.cy = 1;
         ed.cx = 0;
         ed.paste_before();
-        assert_eq!(ed.buf.to_lines(), vec![String::from("abcd"), String::from("bcabcd")]);
+        assert_eq!(
+            ed.buf.to_lines(),
+            vec![String::from("abcd"), String::from("bcabcd")]
+        );
     }
 }

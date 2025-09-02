@@ -9,8 +9,8 @@ use crossterm::terminal::{self, Clear, ClearType};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::editor::Editor;
 use crate::buffer::Buffer;
+use crate::editor::Editor;
 
 const STATUS_TIMEOUT_MS: u64 = 2000;
 
